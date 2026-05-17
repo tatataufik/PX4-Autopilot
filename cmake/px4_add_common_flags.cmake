@@ -74,6 +74,7 @@ function(px4_add_common_flags)
 		-Wcast-align
 		-Wdisabled-optimization
 		-Wdouble-promotion
+			-Wno-error=double-promotion
 		-Wfatal-errors
 		-Wfloat-equal
 		-Wformat-security

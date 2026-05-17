@@ -91,6 +91,7 @@ px4_add_romfs_files(
 
 	5001_xplane_cessna172
 	5002_xplane_tb2
+	5003_xplane_vtail
 	5010_xplane_ehang184
 	5020_xplane_alia250
 	5021_xplane_qtailsitter

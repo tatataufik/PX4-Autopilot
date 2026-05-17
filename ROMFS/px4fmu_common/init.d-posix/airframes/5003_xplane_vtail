@@ -1,0 +1,229 @@
+#!/bin/sh
+################################################################################
+# PX4 SITL Configuration Script for Generic V-Tail Fixed-Wing in X-Plane
+################################################################################
+#
+# @name              VTail Fixed Wing Aircraft
+# @type              Plane V-Tail
+# @class             Plane
+# @maintainer        px4xplane project
+# @url               https://github.com/alireza787b/px4xplane/
+#
+# Airframe:          Generic V-Tail Fixed-Wing
+# Type:              Fixed-Wing (V-Tail / A-Tail, no flaps)
+# Configuration:     1 Propeller Motor + 4 Control Surfaces (ailerons + V-tail)
+# Compatible Sim:    X-Plane 11/12
+#
+# CHANNEL MAPPING:
+# ch0 (FUNC1): Left Aileron
+# ch1 (FUNC2): Right Aileron
+# ch2 (FUNC3): Left V-tail  (pitch + yaw mixing)
+# ch3 (FUNC4): Right V-tail (pitch + yaw mixing)
+# ch4 (FUNC5): Propeller (Motor 1)
+#
+# USAGE:
+# 1. Place this file in: PX4-Autopilot/ROMFS/px4fmu_common/init.d-posix/airframes/
+# 2. Run: make px4_sitl xplane_vtail
+# 3. Launch X-Plane with a V-tail aircraft model
+# 4. Set config_name = VTail in px4xplane config.ini
+#
+################################################################################
+
+. ${R}etc/init.d/rc.fw_defaults
+
+
+################################################################################
+# SECTION 1: CONTROL ALLOCATION - V-TAIL CONFIGURATION
+################################################################################
+# V-TAIL MIXING:
+# - Both surfaces move UP together   → pitch UP
+# - Both surfaces move DOWN together → pitch DOWN
+# - Left UP + Right DOWN             → yaw RIGHT
+# - Left DOWN + Right UP             → yaw LEFT
+#
+# Left V-tail  = (pitch × 0.5) + (yaw × -0.5)
+# Right V-tail = (pitch × 0.5) + (yaw ×  0.5)
+
+param set-default CA_AIRFRAME 1          # Fixed-wing
+param set-default CA_METHOD 2            # Pseudo-inverse allocation
+param set-default CA_FAILURE_MODE 0
+param set-default CA_ROTOR_COUNT 1       # 1 propeller motor
+
+# Propeller Motor 0
+param set-default CA_ROTOR0_PX 1.0
+param set-default CA_ROTOR0_AX 1.0
+param set-default CA_ROTOR0_AZ 0.0
+
+# Control Surfaces
+param set-default CA_SV_CS0_TRQ_R -0.5  # Left Aileron
+param set-default CA_SV_CS0_TYPE 1
+param set-default CA_SV_CS1_TRQ_R 0.5   # Right Aileron
+param set-default CA_SV_CS1_TYPE 2
+param set-default CA_SV_CS2_TRQ_P 0.5   # Left V-tail (pitch + yaw)
+param set-default CA_SV_CS2_TRQ_Y -0.5
+param set-default CA_SV_CS2_TYPE 13
+param set-default CA_SV_CS3_TRQ_P 0.5   # Right V-tail (pitch + yaw)
+param set-default CA_SV_CS3_TRQ_Y 0.5
+param set-default CA_SV_CS3_TYPE 14
+param set-default CA_SV_CS_COUNT 4
+
+# PWM Output Mapping
+param set-default PWM_MAIN_FUNC1 201     # Left aileron
+param set-default PWM_MAIN_FUNC2 202     # Right aileron
+param set-default PWM_MAIN_FUNC3 203     # Left V-tail
+param set-default PWM_MAIN_FUNC4 204     # Right V-tail
+param set-default PWM_MAIN_FUNC5 101     # Propeller
+
+
+################################################################################
+# SECTION 2: EKF2 SENSOR FUSION
+################################################################################
+
+param set-default SENS_EN_GPSSIM 1
+param set-default SENS_EN_BAROSIM 1
+param set-default SENS_EN_ARSPDSIM 1
+param set-default SENS_EN_MAGSIM 1
+param set-default SYS_HAS_BARO 1
+param set-default SYS_HAS_GPS 1
+param set-default SYS_HAS_MAG 1
+
+param set-default EKF2_BARO_CTRL 1
+param set-default EKF2_MULTI_IMU 1
+
+# Accelerometer bias (X-Plane SITL requires higher tolerance than Gazebo)
+param set-default EKF2_ABIAS_INIT 0.2
+param set-default EKF2_ABL_LIM 2.5
+param set-default EKF2_ABL_TAU 0.5
+param set-default EKF2_ABL_ACCLIM 35.0
+param set-default EKF2_ACC_NOISE 1.0
+param set-default EKF2_ACC_B_NOISE 0.001
+
+param set-default EKF2_GYR_NOISE 0.015
+param set-default EKF2_GYR_B_NOISE 0.001
+
+param set-default EKF2_BARO_NOISE 0.003
+param set-default EKF2_BARO_DELAY 0.0
+param set-default EKF2_BARO_GATE 10.0
+
+param set-default EKF2_GPS_DELAY 0.0
+param set-default EKF2_GPS_P_NOISE 0.15
+param set-default EKF2_GPS_V_NOISE 0.15
+param set-default EKF2_GPS_P_GATE 5.0
+param set-default EKF2_GPS_V_GATE 5.0
+
+param set-default EKF2_MAG_TYPE 0
+param set-default EKF2_HEAD_NOISE 0.3
+param set-default EKF2_MAG_NOISE 0.05
+param set-default EKF2_MAG_GATE 5.0
+
+param set-default EKF2_ASP_DELAY 0.0
+param set-default EKF2_TAS_GATE 5.0
+param set-default EKF2_REQ_VDRIFT 1.0
+
+param set-default IMU_GYRO_RATEMAX 100
+param set-default IMU_INTEG_RATE 100
+
+
+################################################################################
+# SECTION 3: FIXED-WING RATE CONTROL
+################################################################################
+
+param set-default FW_RR_P 0.15
+param set-default FW_RR_I 0.10
+param set-default FW_RR_D 0.01
+param set-default FW_RR_FF 0.6
+param set-default FW_R_RMAX 30.0
+param set-default FW_R_TC 0.4
+param set-default FW_R_LIM 50.0
+
+param set-default FW_PR_P 0.12
+param set-default FW_PR_I 0.08
+param set-default FW_PR_D 0.01
+param set-default FW_PR_FF 0.5
+param set-default FW_P_LIM_MAX 25.0
+param set-default FW_P_LIM_MIN -20.0
+param set-default FW_P_TC 0.4
+
+param set-default FW_YR_P 0.08
+param set-default FW_YR_I 0.05
+param set-default FW_YR_D 0.003
+param set-default FW_YR_FF 0.3
+
+
+################################################################################
+# SECTION 4: AIRSPEED CONTROL
+################################################################################
+
+param set-default FW_AIRSPD_MIN 15.0
+param set-default FW_AIRSPD_MAX 35.0
+param set-default FW_AIRSPD_TRIM 20.0
+param set-default FW_AIRSPD_STALL 12.0
+param set-default FW_USE_AIRSPD 1
+param set-default ASPD_DO_CHECKS 7
+param set-default SYS_HAS_NUM_ASPD 1
+
+
+################################################################################
+# SECTION 5: TECS
+################################################################################
+
+param set-default FW_T_ALT_TC 5.0
+param set-default FW_T_RLL2THR 15.0
+param set-default FW_T_STE_R_TC 1.0
+param set-default FW_T_CLMB_MAX 5.0
+param set-default FW_T_SINK_MIN 2.0
+param set-default FW_T_SINK_MAX 5.0
+param set-default FW_T_VERT_ACC 7.0
+param set-default FW_T_THR_DAMPING 0.1
+param set-default FW_T_PTCH_DAMP 0.1
+
+
+################################################################################
+# SECTION 6: THROTTLE
+################################################################################
+
+param set-default FW_THR_TRIM 0.60
+param set-default FW_THR_MAX 1.0
+param set-default FW_THR_MIN 0.05
+param set-default FW_THR_IDLE 0.00
+param set-default FW_THR_SLEW_MAX 0.50
+
+
+################################################################################
+# SECTION 7: NAVIGATION
+################################################################################
+
+param set-default NPFG_PERIOD 20.0
+param set-default NPFG_DAMPING 0.75
+param set-default NPFG_ROLL_TC 0.4
+
+param set-default NAV_ACC_RAD 25.0
+param set-default NAV_FW_ALT_RAD 10.0
+param set-default NAV_LOITER_RAD 100.0
+param set-default RTL_RETURN_ALT 50
+param set-default RTL_LOITER_RAD 100.0
+param set-default MIS_TAKEOFF_ALT 30.0
+
+
+################################################################################
+# SECTION 8: TAKEOFF & LANDING
+################################################################################
+
+param set-default FW_TKO_AIRSPD 18.0
+param set-default FW_TKO_PITCH_MIN 15.0
+param set-default FW_LND_ABORT 0
+param set-default FW_LND_AIRSPD 0
+param set-default FW_LND_FLALT 3.0
+param set-default FW_LND_FL_PMAX 25.0
+param set-default LNDFW_AIRSPD_MAX 25.0
+param set-default LNDFW_VEL_XY_MAX 15.0
+
+
+################################################################################
+# SECTION 9: SYSTEM
+################################################################################
+
+param set-default SDLOG_MODE 0
+param set-default CBRK_USB_CHK 197848
+param set-default CBRK_SUPPLY_CHK 894281
+param set-default CBRK_IO_SAFETY 22027
