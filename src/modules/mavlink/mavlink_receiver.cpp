@@ -316,6 +316,10 @@ MavlinkReceiver::handle_message(mavlink_message_t *msg)
 		handle_message_gimbal_device_information(msg);
 		break;
 
+	case MAVLINK_MSG_ID_TRACKING_MESSAGE:
+		handle_message_tracking_message(msg);
+		break;
+
 	case MAVLINK_MSG_ID_REQUEST_EVENT:
 		handle_message_request_event(msg);
 		break;
@@ -1969,6 +1973,19 @@ MavlinkReceiver::handle_message_obstacle_distance(mavlink_message_t *msg)
 	obstacle_distance.frame = mavlink_obstacle_distance.frame;
 
 	_obstacle_distance_pub.publish(obstacle_distance);
+}
+
+void
+MavlinkReceiver::handle_message_tracking_message(mavlink_message_t *msg)
+{
+	mavlink_tracking_message_t pkt{};
+	mavlink_msg_tracking_message_decode(msg, &pkt);
+
+	tracking_message_s trk{};
+	trk.timestamp = hrt_absolute_time();
+	trk.errorx    = pkt.errorx;
+	trk.errory    = pkt.errory;
+	_tracking_message_pub.publish(trk);
 }
 
 void

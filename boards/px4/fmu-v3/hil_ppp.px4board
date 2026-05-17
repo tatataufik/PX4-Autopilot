@@ -73,3 +73,6 @@ CONFIG_MODULES_SIMULATION_SIMULATOR_SIH=n
 # ── ppp_link — async PPP wrapper that configures USART3 termios and ────────
 # spawns NuttX netutils/pppd to bring up ppp0 over TELEM2 (/dev/ttyS2)
 CONFIG_SYSTEMCMDS_PPP_LINK=y
+
+# ── fw_tracking — visual-servo tracking mode via TRACKING_MESSAGE ─────────
+CONFIG_MODULES_FW_TRACKING=y
