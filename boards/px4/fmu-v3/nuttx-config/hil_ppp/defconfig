@@ -6,8 +6,10 @@
 #   - TUN virtual interface (required by netutils/pppd)
 #   - ALLOW_BSD_COMPONENTS (required for NET_TUN)
 #   - netutils/pppd + netutils/chat
-#   - USART3 (TELEM2, /dev/ttyS2) reconfigured for 921600 baud, large
-#     DMA buffers, NO hardware flow control (pppd uses nocrtscts)
+#   - USART3 (TELEM2, /dev/ttyS2) reconfigured for 115200 baud PPP,
+#     large DMA buffers, NO hardware flow control (pppd uses nocrtscts)
+#   - USART2 (TELEM1, /dev/ttyS1) at 115200 default; rc.board_ppp reconfigures
+#     to 921600 at runtime for direct QGC / companion connections (-r 80000)
 #
 # All other settings are inherited from boards/px4/fmu-v3/nuttx-config/nsh/defconfig
 # via the NuttX merge mechanism (px4_impl_os.cmake falls back to nsh/ for any
@@ -250,12 +252,12 @@ CONFIG_UART8_RXBUFSIZE=300
 CONFIG_UART8_TXBUFSIZE=300
 CONFIG_USART1_RXBUFSIZE=128
 CONFIG_USART1_TXBUFSIZE=32
-CONFIG_USART2_BAUD=57600
-CONFIG_USART2_IFLOWCONTROL=y
-CONFIG_USART2_OFLOWCONTROL=y
-CONFIG_USART2_RXBUFSIZE=600
+CONFIG_USART2_BAUD=115200
+CONFIG_USART2_IFLOWCONTROL=n
+CONFIG_USART2_OFLOWCONTROL=n
+CONFIG_USART2_RXBUFSIZE=1024
 CONFIG_USART2_RXDMA=y
-CONFIG_USART2_TXBUFSIZE=1100
+CONFIG_USART2_TXBUFSIZE=2048
 CONFIG_USART6_BAUD=57600
 CONFIG_USART6_RXBUFSIZE=300
 CONFIG_USART6_RXDMA=y
@@ -300,6 +302,13 @@ CONFIG_NETUTILS_CHAT=y
 # NETDEV_LATEINIT suppresses the arch call; our PPP/TUN device comes up later
 # when ppp_link runs from rcS extras.txt.
 CONFIG_NETDEV_LATEINIT=y
+
+# ── USART2 = TELEM1 = /dev/ttyS1 — direct MAVLink ────────────────────────
+# Non-PPP path: QGC / companion connects here directly (not through the tunnel).
+# rc.board_ppp reconfigures TELEM1 to 921600 baud at runtime via mavlink_open_uart()
+# (-b 921600 -r 80000). NuttX default is 115200 with TX=2048/RX=1024 (base config),
+# same sizing as USART3 — both ports designed around 115200 (~11.5 KB/s) at build time.
+# Flow control disabled — TELEM1 cables rarely wire CTS/RTS.
 
 # ── USART3 = TELEM2 = /dev/ttyS2 — reconfigured for PPP ──────────────────
 # 115200 baud, NO hardware flow control.

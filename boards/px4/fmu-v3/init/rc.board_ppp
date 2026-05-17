@@ -91,15 +91,55 @@ fi
 
 #------------------------------------------------------------------------------
 # 3. Start MAVLink in UDP mode on ppp0
-#    -u 14560   : UDP port (px4xplane connects here via socat)
+#    -u 14560   : UDP port (px4xplane connects here via socat TCP:4560 → UDP:14560)
 #    -m onboard : message set optimised for HIL (includes HIL_* messages)
-#    -r 100000  : 100 KB/s rate limit
+#    -r 100000  : 100 KB/s rate limit — PPP link is 115200 baud (~11.5 KB/s
+#                 raw) so anything above 10-11 KB/s is already the physical
+#                 ceiling.  The higher cap gives burst headroom without
+#                 overwhelming NuttX's TCP/PPP RX window.
 #
 #    Note: the mavlink module checks CONFIG_NET at compile time to enable
 #    UDP support (MAVLINK_UDP macro in mavlink_main.h).  This only works
 #    when the hil_ppp.px4board was used to build the firmware (CONFIG_NET=y).
 #------------------------------------------------------------------------------
-echo "rc.board_ppp: starting MAVLink UDP on port 14560"
+echo "rc.board_ppp: starting MAVLink UDP on port 14560 (PPP path, rate-capped)"
 mavlink start -u 14560 -m onboard -r 100000
 
-echo "rc.board_ppp: ready — waiting for px4xplane connection on UDP 10.0.0.1:14560"
+#------------------------------------------------------------------------------
+# 4. Start MAVLink on TELEM1 (/dev/ttyS1) at 921600 baud for direct connections
+#    (QGC, companion computer, or any GCS not going through the PPP tunnel).
+#
+#    The NuttX defconfig initialises USART2 at 115200 with 2048/1024 buffers.
+#    mavlink_open_uart() reconfigures the UART to 921600 via termios at startup.
+#
+#    Rate: -r 80000 is the PX4-documented maximum for 921600 baud (87% of
+#    92160 B/s physical throughput), leaving headroom for framing overhead.
+#    baudrate/20 = 46080 would be the default; 80000 recovers the full link.
+#
+#    px4xplane detects peer IP ≠ 10.0.x.x → sets SO_SNDBUF=4MB / SO_RCVBUF=2MB
+#    and drains 64 passes × 4096 B per flight-loop frame (ConnectionManager).
+#------------------------------------------------------------------------------
+echo "rc.board_ppp: starting MAVLink serial on TELEM1 at 921600 -r 80000 (direct path)"
+mavlink start -d /dev/ttyS1 -b 921600 -m onboard -r 80000
+
+#------------------------------------------------------------------------------
+# 5. GCS/recorder MAVLink instance on UDP 14556 (broadcast over PPP to host)
+#    Separate from the HIL port (14560) so a Python recorder or QGC can connect
+#    without touching the px4xplane HIL stream.
+#
+#    -r 1200 : 1.2 KB/s ceiling — ATTITUDE@10Hz + HEARTBEAT@1Hz + occasional
+#              NAV_CONTROLLER_OUTPUT + MISSION_CURRENT fits in ~600 B/s,
+#              leaving margin for bursts without overloading the PPP link.
+#    -p      : broadcast to 255.255.255.255:14556; the host receives on
+#              udpin:0.0.0.0:14556 (pymavlink recorder / QGC broadcast mode).
+#    -m normal : standard GCS message set (no HIL_* messages).
+#
+#    Python recorder usage (on the host):
+#      python3 tools/record_flight.py --connection udpin:0.0.0.0:14556
+#    Alternative — direct TELEM1 serial (preferred, no PPP overhead):
+#      python3 tools/record_flight.py --connection serial:/dev/ttyUSB0:921600
+#------------------------------------------------------------------------------
+echo "rc.board_ppp: starting MAVLink GCS broadcast on UDP 14556 (recorder/QGC)"
+mavlink start -u 14556 -m normal -r 1200 -p
+
+echo "rc.board_ppp: ready — HIL UDP :14560 | GCS UDP :14556 | TELEM1 UART @921600"
