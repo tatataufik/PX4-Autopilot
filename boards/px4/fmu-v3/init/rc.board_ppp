@@ -1,0 +1,105 @@
+#!/bin/sh
+#------------------------------------------------------------------------------
+# rc.board_ppp — HIL + PPP startup for fmu-v3 hil_ppp variant
+#
+# Responsibilities:
+#   1. Set HIL parameters so rcS starts commander with -h and pwm_out_sim
+#   2. Start pppd on TELEM2 (/dev/ttyS2) to establish the PPP link
+#   3. Wait for the ppp0 interface to come up
+#   4. Start mavlink in UDP mode on port 14560 so px4xplane can connect
+#
+# This file is sourced from SD:/etc/extras.txt after all board defaults and
+# sensor init have run (i.e. after rc.board_defaults and rc.board_sensors).
+#
+# SD card setup (one-time):
+#   Create /fs/microsd/etc/extras.txt containing:
+#     . /etc/init.d/rc.board_ppp
+#
+# Host side (macOS/Linux):
+#   1. Connect TELEM2 via USB-UART adapter (FTDI/CP2102)
+#   2. sudo pppd /dev/tty.usbserial-XXXX 115200 \
+#          10.0.0.2:10.0.0.1 noauth local nodetach nocrtscts \
+#          asyncmap 0 novj nopcomp noaccomp lcp-echo-interval 0
+#      asyncmap 0        — do not escape any control chars (binary clean link)
+#      novj/nopcomp/noaccomp — disable header compression (not needed on LAN)
+#      lcp-echo-interval 0   — disable LCP keepalives (avoids link drops)
+#   3. socat TCP-LISTEN:4560,reuseaddr,fork UDP:10.0.0.1:14560
+#   4. Launch X-Plane with px4xplane plugin (it connects to TCP :4560)
+#
+# PPP addressing:
+#   Hardware (ppp0) : 10.0.0.1
+#   Host    (ppp0) : 10.0.0.2
+#------------------------------------------------------------------------------
+
+echo "rc.board_ppp: configuring HIL + PPP mode"
+
+#------------------------------------------------------------------------------
+# 1. HIL parameters
+#    SYS_HITL=1  → rcS: commander start -h, pwm_out_sim, sensors start -h
+#    These must be set before rcS runs commander, so this file should be
+#    sourced early (from rc.board_defaults on the SD card).
+#------------------------------------------------------------------------------
+param set SYS_HITL 1
+
+# Disable real sensors — HIL sensor data comes from px4xplane
+param set SENS_EN_GPSSIM 1
+param set SENS_EN_BAROSIM 1
+param set SENS_EN_ARSPDSIM 1
+param set SENS_EN_MAGSIM 1
+
+# Disable GPS driver (HIL provides position via HIL_GPS)
+param set GPS_1_CONFIG 0
+
+# Accelerometer bias tolerance for X-Plane SITL (lower sensor rate than Gazebo)
+param set EKF2_ABL_LIM 2.5
+
+# Disable preflight USB check (no USB power in flight)
+param set CBRK_USB_CHK 197848
+param set CBRK_SUPPLY_CHK 894281
+param set CBRK_IO_SAFETY 22027
+
+#------------------------------------------------------------------------------
+# 2. Start async PPP on TELEM2 via ppp_link
+#
+#    ppp_link is a thin PX4 wrapper (src/systemcmds/ppp_link/) that:
+#      a) Opens /dev/ttyS2 and sets termios to 921600 baud, 8N1, no flow ctrl,
+#         raw mode — the baud rate persists on the NuttX device node after close
+#      b) Spawns a background task that calls pppd() (NuttX netutils/pppd)
+#         which runs async HDLC (RFC 1662 AHDLC) framing over the raw byte
+#         stream and brings up a tun0/ppp0 interface via LCP/IPCP negotiation.
+#
+#    NuttX pppd() is a C library function, not a CLI tool; ppp_link bridges
+#    the gap so it can be invoked from NSH scripts.
+#
+#    IP addresses (local=10.0.0.1 remote=10.0.0.2) are negotiated by IPCP
+#    at link-up time; no extra arguments are required here.
+#------------------------------------------------------------------------------
+echo "rc.board_ppp: starting async PPP on /dev/ttyS2 (TELEM2, 115200 baud)"
+ppp_link start /dev/ttyS2 115200
+
+# Give async LCP/IPCP negotiation time to complete (~2-3 LCP round-trips)
+sleep 3
+
+# Verify the interface came up
+ifconfig ppp0
+if [ $? -ne 0 ]
+then
+    echo "rc.board_ppp: WARNING — ppp0 did not come up, check wiring and host pppd"
+else
+    echo "rc.board_ppp: ppp0 up, local=10.0.0.1 remote=10.0.0.2"
+fi
+
+#------------------------------------------------------------------------------
+# 3. Start MAVLink in UDP mode on ppp0
+#    -u 14560   : UDP port (px4xplane connects here via socat)
+#    -m onboard : message set optimised for HIL (includes HIL_* messages)
+#    -r 100000  : 100 KB/s rate limit
+#
+#    Note: the mavlink module checks CONFIG_NET at compile time to enable
+#    UDP support (MAVLINK_UDP macro in mavlink_main.h).  This only works
+#    when the hil_ppp.px4board was used to build the firmware (CONFIG_NET=y).
+#------------------------------------------------------------------------------
+echo "rc.board_ppp: starting MAVLink UDP on port 14560"
+mavlink start -u 14560 -m onboard -r 100000
+
+echo "rc.board_ppp: ready — waiting for px4xplane connection on UDP 10.0.0.1:14560"

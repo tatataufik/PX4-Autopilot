@@ -1,0 +1,8 @@
+menuconfig SYSTEMCMDS_PPP_LINK
+	bool "ppp_link"
+	default n
+	depends on PLATFORM_NUTTX && NETUTILS_PPPD
+	---help---
+		Async PPP link manager for HIL over TELEM2.
+		Configures UART termios (baud/raw/no-flow-ctrl) then starts
+		NuttX netutils/pppd in a background task to bring up ppp0.

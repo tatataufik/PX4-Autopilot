@@ -1,0 +1,75 @@
+# fmu-v3 HIL + PPP variant
+#
+# Purpose: Hardware-In-the-Loop simulation with px4xplane plugin connected
+# over a PPP (Point-to-Point Protocol) network link on TELEM2 (/dev/ttyS2).
+#
+# TELEM2 is dedicated to pppd at 115200 baud.  Once the PPP link is up the
+# MAVLink module runs in UDP mode so that px4xplane (via socat or a router)
+# can reach the board as if it were PX4 SITL on port 14560.
+#
+# RAM budget (STM32F427, 256 KB total):
+#   default build  ~210 KB used
+#   NET stack delta  ~25 KB
+#   headroom removed ~35 KB (modules below disabled)
+#
+# Build:  make px4_fmu-v3_hil_ppp
+# Flash:  make px4_fmu-v3_hil_ppp upload
+
+# ── Networking (enables MAVLINK_UDP in mavlink_main.h) ─────────────────────
+CONFIG_NET=y
+
+# ── Disable modules not needed for fixed-wing HIL ─────────────────────────
+# These consume the RAM freed up for the network stack.
+
+# No multirotor control
+CONFIG_MODULES_MC_ATT_CONTROL=n
+CONFIG_MODULES_MC_AUTOTUNE_ATTITUDE_CONTROL=n
+CONFIG_MODULES_MC_HOVER_THRUST_ESTIMATOR=n
+CONFIG_MODULES_MC_POS_CONTROL=n
+CONFIG_MODULES_MC_RATE_CONTROL=n
+
+# flight_mode_manager compiles StickTiltXY which needs MPC_MAN_TILT_MAX from
+# mc_pos_control; since mc_pos_control is disabled above, that param doesn't
+# exist. For fixed-wing HIL, manual tilt management isn't needed.
+CONFIG_MODULES_FLIGHT_MODE_MANAGER=n
+
+# No VTOL
+CONFIG_MODULES_VTOL_ATT_CONTROL=n
+
+# No UUV
+CONFIG_MODULES_UUV_ATT_CONTROL=n
+CONFIG_MODULES_UUV_POS_CONTROL=n
+
+# No UAVCAN (largest single saving ~15 KB RAM)
+CONFIG_DRIVERS_UAVCAN=n
+
+# No second position estimator (EKF2 is sufficient for HIL)
+CONFIG_MODULES_LOCAL_POSITION_ESTIMATOR=n
+
+# No temperature compensation (no real sensors in HIL)
+CONFIG_MODULES_TEMPERATURE_COMPENSATION=n
+
+# No autotune (not useful in HIL)
+CONFIG_MODULES_FW_AUTOTUNE_ATTITUDE_CONTROL=n
+CONFIG_MODULES_GYRO_CALIBRATION=n
+
+# No zenoh / UXRCE DDS (saves flash + RAM)
+CONFIG_MODULES_UXRCE_DDS_CLIENT=n
+
+# SIH not needed — we use external HIL (px4xplane)
+CONFIG_MODULES_SIMULATION_SIMULATOR_SIH=n
+
+# ── Keep these — required for HIL operation ───────────────────────────────
+# CONFIG_MODULES_COMMANDER=y          (inherited, starts with -h in HIL mode)
+# CONFIG_MODULES_EKF2=y               (inherited, uses HIL sensor data)
+# CONFIG_MODULES_MAVLINK=y            (inherited, UDP mode with CONFIG_NET)
+# CONFIG_MODULES_FW_ATT_CONTROL=y     (inherited)
+# CONFIG_MODULES_FW_RATE_CONTROL=y    (inherited)
+# CONFIG_MODULES_FW_LATERAL_LONGITUDINAL_CONTROL=y (inherited)
+# CONFIG_MODULES_NAVIGATOR=y          (inherited)
+# CONFIG_MODULES_SENSORS=y            (inherited, -h flag disables real HW)
+# CONFIG_MODULES_CONTROL_ALLOCATOR=y  (inherited)
+
+# ── ppp_link — async PPP wrapper that configures USART3 termios and ────────
+# spawns NuttX netutils/pppd to bring up ppp0 over TELEM2 (/dev/ttyS2)
+CONFIG_SYSTEMCMDS_PPP_LINK=y

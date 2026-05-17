@@ -1,0 +1,15 @@
+# SD card extras.txt for fmu-v3 hil_ppp variant
+#
+# Copy this file to the SD card as:
+#   /fs/microsd/etc/extras.txt
+#
+# This sources rc.board_ppp which:
+#   - Sets SYS_HITL=1 and HIL sensor params
+#   - Starts pppd on TELEM2 (/dev/ttyS2) at 921600 baud
+#   - Starts mavlink UDP on port 14560 once ppp0 is up
+#
+# The file is sourced by rcS after rc.board_defaults and rc.board_sensors.
+# SYS_HITL must be set before commander starts, so this must run early.
+# rcS sources extras.txt before starting commander, which satisfies this.
+
+. /etc/init.d/rc.board_ppp
