@@ -39,6 +39,9 @@ add_xplane_target(xplane_vtail 5003 5003_xplane_vtail)
 # X-Plane eVTOL Air Taxi (Quad Copter) - ehang184 Configuration
 add_xplane_target(xplane_ehang184 5010 5010_xplane_ehang184)
 
+# X-Plane 5-inch Quadrotor Configuration
+add_xplane_target(xplane_quad 5011 5011_xplane_quad)
+
 # X-Plane eVTOL Air Taxi (Quad VTOL) - Alia-250 Configuration
 add_xplane_target(xplane_alia250 5020 5020_xplane_alia250)
 
