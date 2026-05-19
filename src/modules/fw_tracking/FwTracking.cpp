@@ -345,17 +345,17 @@ void FwTracking::run()
 
 int FwTracking::task_spawn(int argc, char *argv[])
 {
-	FwTracking *instance = new FwTracking();
+	_task_id = px4_task_spawn_cmd("fw_tracking",
+				      SCHED_DEFAULT,
+				      SCHED_PRIORITY_DEFAULT,
+				      PX4_STACK_ADJUSTED(2000),
+				      (px4_main_t)&run_trampoline,
+				      (char *const *)argv);
 
-	if (!instance) {
-		PX4_ERR("alloc failed");
-		return PX4_ERROR;
+	if (_task_id < 0) {
+		_task_id = -1;
+		return -errno;
 	}
-
-	_object.store(instance);
-	_task_id = task_self();
-
-	instance->run();
 
 	return 0;
 }

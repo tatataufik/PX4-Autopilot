@@ -9,8 +9,6 @@
  * Defaults match satria-firmware Parameters.cpp revision.
  */
 
-#include <parameters/param.h>
-
 /**
  * Tracking: maximum error angle
  *

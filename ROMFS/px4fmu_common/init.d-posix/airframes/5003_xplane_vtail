@@ -1,6 +1,6 @@
 #!/bin/sh
 ################################################################################
-# PX4 SITL Configuration Script for Generic V-Tail Fixed-Wing in X-Plane
+# PX4 SITL Configuration for Generic V-Tail Fixed-Wing in X-Plane
 ################################################################################
 #
 # @name              VTail Fixed Wing Aircraft
@@ -10,31 +10,17 @@
 # @url               https://github.com/alireza787b/px4xplane/
 #
 # Airframe:          Generic V-Tail Fixed-Wing
-# Type:              Fixed-Wing (V-Tail / A-Tail, no flaps)
-# Configuration:     1 Propeller Motor + 4 Control Surfaces (ailerons + V-tail)
+# Type:              Fixed-Wing (V-Tail, no flaps, no ground steering)
+# Configuration:     1 Propeller Motor + 4 Control Surfaces (ailerons + vstab)
 # Compatible Sim:    X-Plane 11/12
 #
 # CHANNEL MAPPING:
 # ch0 (FUNC1): Left Aileron
 # ch1 (FUNC2): Right Aileron
-# ch2 (FUNC3): Left V-tail  (pitch + yaw mixing)
-# ch3 (FUNC4): Right V-tail (pitch + yaw mixing)
+# ch2 (FUNC3): Left V-tail  (pitch + yaw mixing via vstab type 7)
+# ch3 (FUNC4): Right V-tail (pitch + yaw mixing via vstab type 8)
 # ch4 (FUNC5): Propeller (Motor 1)
 #
-# USAGE:
-# 1. Place this file in: PX4-Autopilot/ROMFS/px4fmu_common/init.d-posix/airframes/
-# 2. Run: make px4_sitl xplane_vtail
-# 3. Launch X-Plane with a V-tail aircraft model
-# 4. Set config_name = VTail in px4xplane config.ini
-#
-################################################################################
-
-. ${R}etc/init.d/rc.fw_defaults
-
-
-################################################################################
-# SECTION 1: CONTROL ALLOCATION - V-TAIL CONFIGURATION
-################################################################################
 # V-TAIL MIXING:
 # - Both surfaces move UP together   → pitch UP
 # - Both surfaces move DOWN together → pitch DOWN
@@ -43,36 +29,52 @@
 #
 # Left V-tail  = (pitch × 0.5) + (yaw × -0.5)
 # Right V-tail = (pitch × 0.5) + (yaw ×  0.5)
+#
+################################################################################
 
-param set-default CA_AIRFRAME 1          # Fixed-wing
-param set-default CA_METHOD 2            # Pseudo-inverse allocation
+. ${R}etc/init.d/rc.fw_defaults
+
+
+################################################################################
+# SECTION 1: CONTROL ALLOCATION
+################################################################################
+
+param set-default CA_AIRFRAME 1
+param set-default CA_METHOD 2
 param set-default CA_FAILURE_MODE 0
-param set-default CA_ROTOR_COUNT 1       # 1 propeller motor
+param set-default CA_ROTOR_COUNT 1
 
-# Propeller Motor 0
+# Propeller Motor 0 — forward thrust
 param set-default CA_ROTOR0_PX 1.0
 param set-default CA_ROTOR0_AX 1.0
 param set-default CA_ROTOR0_AZ 0.0
 
-# Control Surfaces
-param set-default CA_SV_CS0_TRQ_R -0.5  # Left Aileron
+# CS0: Left Aileron
+param set-default CA_SV_CS0_TRQ_R -0.5
 param set-default CA_SV_CS0_TYPE 1
-param set-default CA_SV_CS1_TRQ_R 0.5   # Right Aileron
+
+# CS1: Right Aileron
+param set-default CA_SV_CS1_TRQ_R 0.5
 param set-default CA_SV_CS1_TYPE 2
-param set-default CA_SV_CS2_TRQ_P 0.5   # Left V-tail (pitch + yaw)
+
+# CS2: Left V-tail (vstab) — pitch + yaw mixing
+param set-default CA_SV_CS2_TRQ_P 0.5
 param set-default CA_SV_CS2_TRQ_Y -0.5
-param set-default CA_SV_CS2_TYPE 13
-param set-default CA_SV_CS3_TRQ_P 0.5   # Right V-tail (pitch + yaw)
+param set-default CA_SV_CS2_TYPE 7
+
+# CS3: Right V-tail (vstab) — pitch + yaw mixing
+param set-default CA_SV_CS3_TRQ_P 0.5
 param set-default CA_SV_CS3_TRQ_Y 0.5
-param set-default CA_SV_CS3_TYPE 14
+param set-default CA_SV_CS3_TYPE 8
+
 param set-default CA_SV_CS_COUNT 4
 
 # PWM Output Mapping
-param set-default PWM_MAIN_FUNC1 201     # Left aileron
-param set-default PWM_MAIN_FUNC2 202     # Right aileron
-param set-default PWM_MAIN_FUNC3 203     # Left V-tail
-param set-default PWM_MAIN_FUNC4 204     # Right V-tail
-param set-default PWM_MAIN_FUNC5 101     # Propeller
+param set-default PWM_MAIN_FUNC1 201
+param set-default PWM_MAIN_FUNC2 202
+param set-default PWM_MAIN_FUNC3 203
+param set-default PWM_MAIN_FUNC4 204
+param set-default PWM_MAIN_FUNC5 101
 
 
 ################################################################################
@@ -81,22 +83,22 @@ param set-default PWM_MAIN_FUNC5 101     # Propeller
 
 param set-default SENS_EN_GPSSIM 1
 param set-default SENS_EN_BAROSIM 1
-param set-default SENS_EN_ARSPDSIM 1
 param set-default SENS_EN_MAGSIM 1
+param set-default SENS_EN_ARSPDSIM 0
 param set-default SYS_HAS_BARO 1
 param set-default SYS_HAS_GPS 1
 param set-default SYS_HAS_MAG 1
+param set-default SYS_HAS_NUM_ASPD 0
 
 param set-default EKF2_BARO_CTRL 1
-param set-default EKF2_MULTI_IMU 1
+param set-default EKF2_MULTI_IMU 0
 
-# Accelerometer bias (X-Plane SITL requires higher tolerance than Gazebo)
 param set-default EKF2_ABIAS_INIT 0.2
-param set-default EKF2_ABL_LIM 2.5
+param set-default EKF2_ABL_LIM 20.0
 param set-default EKF2_ABL_TAU 0.5
 param set-default EKF2_ABL_ACCLIM 35.0
 param set-default EKF2_ACC_NOISE 1.0
-param set-default EKF2_ACC_B_NOISE 0.001
+param set-default EKF2_ACC_B_NOISE 0.005
 
 param set-default EKF2_GYR_NOISE 0.015
 param set-default EKF2_GYR_B_NOISE 0.001
@@ -151,16 +153,15 @@ param set-default FW_YR_FF 0.3
 
 
 ################################################################################
-# SECTION 4: AIRSPEED CONTROL
+# SECTION 4: AIRSPEED — disabled (X-Plane plugin provides no diff pressure)
 ################################################################################
 
 param set-default FW_AIRSPD_MIN 15.0
 param set-default FW_AIRSPD_MAX 35.0
 param set-default FW_AIRSPD_TRIM 20.0
 param set-default FW_AIRSPD_STALL 12.0
-param set-default FW_USE_AIRSPD 1
-param set-default ASPD_DO_CHECKS 7
-param set-default SYS_HAS_NUM_ASPD 1
+param set-default FW_USE_AIRSPD 0
+param set-default ASPD_DO_CHECKS 0
 
 
 ################################################################################
@@ -223,6 +224,7 @@ param set-default LNDFW_VEL_XY_MAX 15.0
 # SECTION 9: SYSTEM
 ################################################################################
 
+param set-default COM_RC_IN_MODE 1
 param set-default SDLOG_MODE 0
 param set-default CBRK_USB_CHK 197848
 param set-default CBRK_SUPPLY_CHK 894281
