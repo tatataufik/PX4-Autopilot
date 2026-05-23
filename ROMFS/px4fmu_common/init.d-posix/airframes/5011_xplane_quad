@@ -137,9 +137,12 @@ param set-default EKF2_TAS_GATE 5.0
 param set-default EKF2_WIND_NSD 0.01
 param set-default EKF2_REQ_VDRIFT 2.0
 
-# IMU — higher rate for agile 5-inch
-param set-default IMU_GYRO_RATEMAX 400
-param set-default IMU_INTEG_RATE 200
+# IMU — X-Plane delivers RREF/HIL at ~60-80 Hz, so integrating the rate loop
+# faster than that just runs on stale state. 100 Hz matches the actual cadence
+# and removes the rate-σ floor we previously chased through PID tuning.
+# Lowered 200 → 100 (2026-05-23, after diagnosing rate floor on ehang184).
+param set-default IMU_GYRO_RATEMAX 100
+param set-default IMU_INTEG_RATE 100
 
 
 ################################################################################
@@ -160,7 +163,11 @@ param set-default MC_PITCHRATE_P 0.15
 param set-default MC_PITCHRATE_I 0.1
 param set-default MC_PITCHRATE_D 0.01
 param set-default MC_PITCHRATE_FF 0
-param set-default MC_PITCHRATE_K 3
+# Pitch K equalized with MC_ROLLRATE_K (=2.25). The 5-inch quad has symmetric
+# arms (±0.1 m), so asymmetric K creates a 33% pitch-vs-roll gain mismatch
+# that shows up as pitch oscillating while roll is calm (verified by live
+# MAVLink readback comparing two axes).
+param set-default MC_PITCHRATE_K 2.25
 param set-default MC_PITCHRATE_MAX 220
 param set-default MC_PR_INT_LIM 0.3
 
@@ -188,7 +195,11 @@ param set-default MC_YAW_WEIGHT 0.4
 # POSITION & VELOCITY CONTROL
 ################################################################################
 
-param set-default MPC_XY_P 0.05
+# MPC_XY_P raised 0.05 → 0.95 (PX4 small-quad default). Inherited 0.05 value
+# was a copy from ehang184's heavy-vehicle tuning and made the position
+# controller too soft to actually pull a 5-inch quad toward setpoints — felt
+# like "cannot go forward" even with active stick / mission commands.
+param set-default MPC_XY_P 0.95
 param set-default MPC_Z_P 0.25
 
 param set-default MPC_XY_VEL_P_ACC 0.45
@@ -198,15 +209,23 @@ param set-default MPC_Z_VEL_P_ACC 2.5
 param set-default MPC_Z_VEL_I_ACC 1.7
 param set-default MPC_Z_VEL_D_ACC 0.2
 
-param set-default MPC_XY_VEL_MAX 23
+# Speed + waypoint-reliability package (2026-05-24, third iteration):
+# Bumped XY speeds 12→18 m/s + cruise 10→15. Doubled accel limits to
+# accommodate higher-speed braking. Yaw limits also relaxed below — without
+# loosening MIS_YAW_ERR/MPC_YAWRAUTO_MAX, missions can't advance because
+# vehicle never aligns yaw to the next waypoint at speed.
+param set-default MPC_XY_VEL_MAX 18
 param set-default MPC_Z_VEL_MAX_UP 3
 param set-default MPC_Z_VEL_MAX_DN 1.5
-param set-default MPC_VEL_MANUAL 22
-param set-default MPC_XY_CRUISE 22
+param set-default MPC_VEL_MANUAL 18
+param set-default MPC_XY_CRUISE 15
 
+# Accel/jerk scaled to match speed (still gentler than PX4 defaults):
 param set-default MPC_XY_TRAJ_P 0.5
 param set-default MPC_JERK_AUTO 3.0
 param set-default MPC_JERK_MAX 6.0
+param set-default MPC_ACC_HOR 4.0
+param set-default MPC_ACC_HOR_MAX 6.0
 param set-default MPC_XY_ERR_MAX 2
 
 
@@ -214,8 +233,12 @@ param set-default MPC_XY_ERR_MAX 2
 # MANUAL FLIGHT MODE
 ################################################################################
 
+# Tilt cap dropped 55 → 35°. Prevents the position controller from commanding
+# more tilt than the rate loop can actually deliver, which on ehang184 caused
+# a saturation cascade (rate setpoint clipped → controller never catches up).
+# A 5-inch quad rarely needs 55° tilt anyway.
 param set-default MPC_MAN_TILT_MAX 35
-param set-default MPC_TILTMAX_AIR 55
+param set-default MPC_TILTMAX_AIR 35
 param set-default MPC_TILTMAX_LND 12
 
 param set-default MPC_THR_HOVER 0.5
@@ -226,10 +249,16 @@ param set-default MPC_THR_XY_MARG 0.3
 
 param set-default MPC_MAN_Y_MAX 20
 param set-default MPC_MAN_Y_TAU 0.08
-param set-default MPC_YAWRAUTO_ACC 20
-param set-default MPC_YAWRAUTO_MAX 30
+# MPC_YAWRAUTO_MAX bumped 30 → 90 °/s so yaw can keep up with mission
+# turns at 15 m/s cruise — was blocking waypoint completion before.
+param set-default MPC_YAWRAUTO_ACC 45
+param set-default MPC_YAWRAUTO_MAX 90
 
-param set-default MPC_HOLD_MAX_XY 0.8
+# MPC_HOLD_MAX_XY lowered 0.8 → 0.2 so small/subtle pitch-roll stick inputs
+# escape position-hold mode. Default 0.8 means commanded velocity below
+# 0.8 m/s gets suppressed by the position lock — felt like "can't go forward"
+# even with active stick input. 0.2 keeps hold robust but responsive.
+param set-default MPC_HOLD_MAX_XY 0.2
 param set-default MPC_HOLD_MAX_Z 0.6
 
 param set-default MPC_POS_MODE 4
@@ -279,11 +308,24 @@ param set-default MC_ACRO_SUPEXPOY 0
 # NAVIGATION & MISSION
 ################################################################################
 
-param set-default MIS_YAW_ERR 30
+# MIS_YAW_ERR raised 30 → 90°: vehicle no longer waits for tight yaw
+# alignment before advancing to the next waypoint. At mission speed
+# (15 m/s) the previous 30° threshold made waypoints unreachable —
+# vehicle would overshoot the acceptance radius while still rotating.
+param set-default MIS_YAW_ERR 90
 param set-default MIS_YAW_TMT 5
 param set-default MIS_TAKEOFF_ALT 2.5
 
-param set-default NAV_ACC_RAD 35
+# Waypoint acceptance — "loose smooth curves" preset (10 m / 3 m).
+# Vehicle "cuts corners" earlier instead of flying through each waypoint,
+# which produces visibly smoother mission paths. Tight 1-2 m radii fought
+# X-Plane SITL physics on overshoots; the 35 m heavy-vehicle template
+# value was far too generous. 10 m balances curve smoothness with path
+# fidelity for a 5-inch quad doing mission/survey patterns.
+# NAV_ACC_RAD bumped 10 → 15 m for headroom at MPC_XY_CRUISE=15 m/s.
+# Vehicle covers ~3 m/250 ms loop tick; 15 m radius gives reliable
+# capture even on tangential passes.
+param set-default NAV_ACC_RAD 15
 param set-default NAV_MC_ALT_RAD 3
 
 param set-default RTL_RETURN_ALT 30
