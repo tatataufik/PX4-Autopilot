@@ -1,0 +1,54 @@
+# X-Plane DREF map — Alia-250 eVTOL VTOL quadplane (5020_xplane_alia250)
+#
+# 4 hover rotors + 1 pusher motor + ailerons/elevator/rudder.
+# Channel mapping derived from PWM_MAIN_FUNC assignments in the airframe script:
+#
+#   MAIN1=101 (ch 0) → Hover motor 1  → engine[0]
+#   MAIN2=102 (ch 1) → Hover motor 2  → engine[1]
+#   MAIN3=103 (ch 2) → Hover motor 3  → engine[2]
+#   MAIN4=104 (ch 3) → Hover motor 4  → engine[3]
+#   MAIN5=201 (ch 4) → Aileron L (CA_SV_CS0)
+#   MAIN6=202 (ch 5) → Aileron R (CA_SV_CS1)
+#   MAIN7=203 (ch 6) → Elevator  (CA_SV_CS2)
+#   MAIN8=204 (ch 7) → Rudder    (CA_SV_CS3)
+#   MAIN9=105 (ch 8) → Pusher    → engine[4]
+
+{
+    "settings": { "debug": 0 },
+
+    "sim/operation/override/override_joystick"      : { "type": "fixed", "value": 1 },
+    "sim/operation/override/override_throttles"     : { "type": "fixed", "value": 1 },
+    "sim/operation/override/override_flightcontrol" : { "type": "fixed", "value": 1 },
+
+    # Hover engines
+    "sim/flightmodel/engine/ENGN_running[0]"  : { "type": "running", "channel": 0 },
+    "sim/flightmodel/engine/ENGN_running[1]"  : { "type": "running", "channel": 1 },
+    "sim/flightmodel/engine/ENGN_running[2]"  : { "type": "running", "channel": 2 },
+    "sim/flightmodel/engine/ENGN_running[3]"  : { "type": "running", "channel": 3 },
+    "sim/flightmodel/engine/ENGN_thro_use[0]" : { "type": "range",   "channel": 0, "range": 1.0 },
+    "sim/flightmodel/engine/ENGN_thro_use[1]" : { "type": "range",   "channel": 1, "range": 1.0 },
+    "sim/flightmodel/engine/ENGN_thro_use[2]" : { "type": "range",   "channel": 2, "range": 1.0 },
+    "sim/flightmodel/engine/ENGN_thro_use[3]" : { "type": "range",   "channel": 3, "range": 1.0 },
+
+    # Pusher engine (engine index 4)
+    "sim/flightmodel/engine/ENGN_running[4]"  : { "type": "running", "channel": 8 },
+    "sim/flightmodel/engine/ENGN_thro_use[4]" : { "type": "range",   "channel": 8, "range": 1.0 },
+
+    # Ailerons — left wing has three control sections in the Alia-250 model
+    "sim/flightmodel/controls/wing2l_ail1def" : { "type": "angle", "channel": 4, "range":  20.0 },
+    "sim/flightmodel/controls/wing2l_ail2def" : { "type": "angle", "channel": 4, "range":  20.0 },
+    "sim/flightmodel/controls/wing3l_ail2def" : { "type": "angle", "channel": 4, "range":  20.0 },
+
+    # Ailerons — right wing (inverted so both wings produce the same roll direction)
+    "sim/flightmodel/controls/wing2r_ail1def" : { "type": "angle", "channel": 5, "range": -20.0 },
+    "sim/flightmodel/controls/wing2r_ail2def" : { "type": "angle", "channel": 5, "range": -20.0 },
+    "sim/flightmodel/controls/wing3r_ail2def" : { "type": "angle", "channel": 5, "range": -20.0 },
+
+    # Elevator (T-tail: hstab1_elv1def + hstab1_elv2def)
+    "sim/flightmodel/controls/hstab1_elv1def" : { "type": "angle", "channel": 6, "range": -20.0 },
+    "sim/flightmodel/controls/hstab1_elv2def" : { "type": "angle", "channel": 6, "range": -20.0 },
+
+    # Rudder (twin vertical stabilizers)
+    "sim/flightmodel/controls/vstab1_rud1def" : { "type": "angle", "channel": 7, "range":  20.0 },
+    "sim/flightmodel/controls/vstab2_rud2def" : { "type": "angle", "channel": 7, "range":  20.0 }
+}

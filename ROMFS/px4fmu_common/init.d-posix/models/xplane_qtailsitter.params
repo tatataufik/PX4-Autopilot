@@ -1,0 +1,23 @@
+#!/bin/sh
+# Default params for X-Plane Quad Tailsitter SITL (SYS_AUTOSTART=5021)
+# Sourced by px4-rc.xplanesim after the airframe init script runs.
+#
+# The 5021 airframe script already configures the full vehicle (control
+# allocation, EKF2, MC/FW/VT tuning). This file holds X-Plane-specific
+# overrides only.
+
+# EKF2 baseline — small agile VTOL
+param set-default EKF2_GPS_DELAY     0
+param set-default EKF2_MULTI_IMU     1
+param set-default SENS_IMU_MODE      1
+param set-default EKF2_ACC_NOISE     1.0
+param set-default EKF2_GYR_NOISE     0.015
+
+# Airspeed — small experimental tailsitter, cruise 30 m/s
+param set-default FW_AIRSPD_MIN      24.0
+param set-default FW_AIRSPD_TRIM     30.0
+param set-default FW_AIRSPD_MAX      40.0
+param set-default FW_AIRSPD_STALL    20.0
+
+# Battery — small pack (4S)
+param set-default BAT1_N_CELLS       4

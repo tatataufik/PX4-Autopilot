@@ -1,0 +1,29 @@
+# X-Plane DREF map — Ehang 184 eVTOL quad (5010_xplane_ehang184)
+#
+# Same motor layout as xplane_quad but uses different airframe number.
+# Ehang 184: 4 arms, each with 2 co-axial rotors (upper CW, lower CCW).
+# In the X-Plane model we drive 4 engines mapped to the 4 arm positions.
+#
+# PX4 actuator_outputs channel (0-indexed):
+#   channel 0 → FR arm  engine[0]
+#   channel 1 → RL arm  engine[1]
+#   channel 2 → FL arm  engine[2]
+#   channel 3 → RR arm  engine[3]
+
+{
+    "settings": { "debug": 0 },
+
+    "sim/operation/override/override_joystick"      : { "type": "fixed", "value": 1 },
+    "sim/operation/override/override_throttles"     : { "type": "fixed", "value": 1 },
+    "sim/operation/override/override_flightcontrol" : { "type": "fixed", "value": 1 },
+
+    "sim/flightmodel/engine/ENGN_running[0]" : { "type": "running", "channel": 0 },
+    "sim/flightmodel/engine/ENGN_running[1]" : { "type": "running", "channel": 1 },
+    "sim/flightmodel/engine/ENGN_running[2]" : { "type": "running", "channel": 2 },
+    "sim/flightmodel/engine/ENGN_running[3]" : { "type": "running", "channel": 3 },
+
+    "sim/flightmodel/engine/ENGN_thro_use[0]" : { "type": "range", "channel": 0, "range": 1.0 },
+    "sim/flightmodel/engine/ENGN_thro_use[1]" : { "type": "range", "channel": 1, "range": 1.0 },
+    "sim/flightmodel/engine/ENGN_thro_use[2]" : { "type": "range", "channel": 2, "range": 1.0 },
+    "sim/flightmodel/engine/ENGN_thro_use[3]" : { "type": "range", "channel": 3, "range": 1.0 }
+}

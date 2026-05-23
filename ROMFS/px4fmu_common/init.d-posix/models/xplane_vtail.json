@@ -1,0 +1,28 @@
+# X-Plane DREF map — generic V-tail fixed-wing (5003_xplane_vtail)
+#
+# PX4 control allocation output (0-indexed channels):
+#   channel 0 → Left aileron   (FUNC 201)
+#   channel 1 → Right aileron  (FUNC 202, inverted)
+#   channel 2 → Left V-tail    (FUNC 203 → vstab2_rud1def)
+#   channel 3 → Right V-tail   (FUNC 204 → vstab1_rud1def)
+#   channel 4 → Throttle       (FUNC 101)
+
+{
+    "settings": { "debug": 0 },
+
+    "sim/operation/override/override_joystick"      : { "type": "fixed", "value": 1 },
+    "sim/operation/override/override_throttles"     : { "type": "fixed", "value": 1 },
+    "sim/operation/override/override_flightcontrol" : { "type": "fixed", "value": 1 },
+
+    # Engine
+    "sim/flightmodel/engine/ENGN_running[0]"  : { "type": "running", "channel": 4 },
+    "sim/flightmodel/engine/ENGN_thro_use[0]" : { "type": "range",   "channel": 4, "range": 1.0 },
+
+    # Ailerons
+    "sim/flightmodel/controls/wing1l_ail1def" : { "type": "angle", "channel": 0, "range":  20.0 },
+    "sim/flightmodel/controls/wing1r_ail1def" : { "type": "angle", "channel": 1, "range": -20.0 },
+
+    # V-tail surfaces (elevator + rudder mixing handled by PX4 control allocation)
+    "sim/flightmodel/controls/vstab2_rud1def" : { "type": "angle", "channel": 2, "range":  20.0 },
+    "sim/flightmodel/controls/vstab1_rud1def" : { "type": "angle", "channel": 3, "range":  20.0 }
+}

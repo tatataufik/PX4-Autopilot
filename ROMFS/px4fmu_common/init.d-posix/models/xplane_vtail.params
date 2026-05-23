@@ -1,0 +1,40 @@
+#!/bin/sh
+# Default params for X-Plane generic V-tail fixed-wing SITL (SYS_AUTOSTART=5003)
+# Sourced by px4-rc.xplanesim after the airframe init script runs.
+
+# EKF2
+param set-default EKF2_GPS_DELAY     110
+param set-default EKF2_MULTI_IMU     0
+param set-default SENS_IMU_MODE      1
+param set-default EKF2_ACC_NOISE     0.5
+param set-default EKF2_GYR_NOISE     0.02
+
+# FW roll controller
+param set-default FW_RR_P            0.07
+param set-default FW_RR_I            0.02
+param set-default FW_RR_FF           0.35
+param set-default FW_R_TC            0.45
+
+# FW pitch controller
+param set-default FW_PR_P            0.07
+param set-default FW_PR_I            0.02
+param set-default FW_PR_FF           0.30
+param set-default FW_P_TC            0.45
+
+# FW yaw (V-tail combined)
+param set-default FW_YR_P            0.05
+param set-default FW_YR_I            0.00
+param set-default FW_YR_FF           0.30
+
+# Airspeed — generic trainer class
+param set-default FW_AIRSPD_MIN      12.0
+param set-default FW_AIRSPD_TRIM     18.0
+param set-default FW_AIRSPD_MAX      35.0
+param set-default FW_AIRSPD_STALL    10.0
+
+# Throttle
+param set-default FW_THR_MIN         0.05
+param set-default FW_THR_MAX         1.00
+param set-default FW_THR_CRUISE      0.50
+
+param set-default BAT1_N_CELLS       4

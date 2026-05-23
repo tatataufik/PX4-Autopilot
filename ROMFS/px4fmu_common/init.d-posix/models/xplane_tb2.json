@@ -1,0 +1,29 @@
+# X-Plane DREF map — TB2 A-tail fixed-wing (5002_xplane_tb2)
+#
+# PX4 control allocation output (0-indexed channels):
+#   channel 0 → Left aileron   (FUNC 201)
+#   channel 1 → Right aileron  (FUNC 202, inverted)
+#   channel 2 → Left elevon    (FUNC 203)
+#   channel 3 → Right elevon   (FUNC 204)
+#   channel 4 → Throttle       (FUNC 101)
+
+{
+    "settings": { "debug": 0 },
+
+    "sim/operation/override/override_joystick"      : { "type": "fixed", "value": 1 },
+    "sim/operation/override/override_throttles"     : { "type": "fixed", "value": 1 },
+    "sim/operation/override/override_flightcontrol" : { "type": "fixed", "value": 1 },
+
+    # Engine
+    "sim/flightmodel/engine/ENGN_running[0]"  : { "type": "running", "channel": 4 },
+    "sim/flightmodel/engine/ENGN_thro_use[0]" : { "type": "range",   "channel": 4, "range": 1.0 },
+
+    # Ailerons
+    "sim/flightmodel/controls/wing1l_ail1def" : { "type": "angle", "channel": 0, "range":  20.0 },
+    "sim/flightmodel/controls/wing1r_ail1def" : { "type": "angle", "channel": 1, "range": -20.0 },
+
+    # A-tail surfaces
+    "sim/flightmodel/controls/hstab1_elv1def" : { "type": "angle", "channel": 2, "range": -20.0 },
+    "sim/flightmodel/controls/hstab2_elv1def" : { "type": "angle", "channel": 3, "range": -20.0 },
+    "sim/flightmodel/controls/vstab1_rud1def" : { "type": "angle", "channel": 2, "range":  20.0 }
+}

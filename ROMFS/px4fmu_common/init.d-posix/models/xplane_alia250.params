@@ -1,0 +1,23 @@
+#!/bin/sh
+# Default params for X-Plane Alia-250 VTOL quadplane SITL (SYS_AUTOSTART=5020)
+# Sourced by px4-rc.xplanesim after the airframe init script runs.
+#
+# The 5020 airframe script already configures the full vehicle (control
+# allocation, EKF2, MC/FW/VT tuning). This file holds X-Plane-specific
+# overrides only.
+
+# EKF2 baseline — large VTOL with X-Plane sensor cadence
+param set-default EKF2_GPS_DELAY     0
+param set-default EKF2_MULTI_IMU     1
+param set-default SENS_IMU_MODE      1
+param set-default EKF2_ACC_NOISE     1.0
+param set-default EKF2_GYR_NOISE     0.015
+
+# Airspeed — Alia-250 efficient cruise ~52 m/s (~190 km/h)
+param set-default FW_AIRSPD_MIN      42.0
+param set-default FW_AIRSPD_TRIM     52.0
+param set-default FW_AIRSPD_MAX      75.0
+param set-default FW_AIRSPD_STALL    40.0
+
+# Battery — large pack (6S equivalent)
+param set-default BAT1_N_CELLS       6

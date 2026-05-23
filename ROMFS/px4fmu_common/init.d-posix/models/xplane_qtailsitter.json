@@ -1,0 +1,28 @@
+# X-Plane DREF map — Quad Tailsitter (5021_xplane_qtailsitter)
+#
+# Control-surface-less quad tailsitter — all FW control is via differential
+# thrust. Same DREF mapping as a plain quad: 4 engines, no servos.
+#
+# PX4 actuator_outputs channel layout (0-indexed):
+#   channel 0 → Motor 1  Front-Right (CW)   → engine[0]
+#   channel 1 → Motor 2  Rear-Left   (CW)   → engine[1]
+#   channel 2 → Motor 3  Front-Left  (CCW)  → engine[2]
+#   channel 3 → Motor 4  Rear-Right  (CCW)  → engine[3]
+
+{
+    "settings": { "debug": 0 },
+
+    "sim/operation/override/override_joystick"      : { "type": "fixed", "value": 1 },
+    "sim/operation/override/override_throttles"     : { "type": "fixed", "value": 1 },
+    "sim/operation/override/override_flightcontrol" : { "type": "fixed", "value": 1 },
+
+    "sim/flightmodel/engine/ENGN_running[0]" : { "type": "running", "channel": 0 },
+    "sim/flightmodel/engine/ENGN_running[1]" : { "type": "running", "channel": 1 },
+    "sim/flightmodel/engine/ENGN_running[2]" : { "type": "running", "channel": 2 },
+    "sim/flightmodel/engine/ENGN_running[3]" : { "type": "running", "channel": 3 },
+
+    "sim/flightmodel/engine/ENGN_thro_use[0]" : { "type": "range", "channel": 0, "range": 1.0 },
+    "sim/flightmodel/engine/ENGN_thro_use[1]" : { "type": "range", "channel": 1, "range": 1.0 },
+    "sim/flightmodel/engine/ENGN_thro_use[2]" : { "type": "range", "channel": 2, "range": 1.0 },
+    "sim/flightmodel/engine/ENGN_thro_use[3]" : { "type": "range", "channel": 3, "range": 1.0 }
+}

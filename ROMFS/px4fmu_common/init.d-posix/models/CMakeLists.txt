@@ -1,0 +1,16 @@
+px4_add_romfs_files(
+	xplane_quad.json
+	xplane_quad.params
+	xplane_cessna172.json
+	xplane_cessna172.params
+	xplane_vtail.json
+	xplane_vtail.params
+	xplane_tb2.json
+	xplane_tb2.params
+	xplane_ehang184.json
+	xplane_ehang184.params
+	xplane_alia250.json
+	xplane_alia250.params
+	xplane_qtailsitter.json
+	xplane_qtailsitter.params
+)

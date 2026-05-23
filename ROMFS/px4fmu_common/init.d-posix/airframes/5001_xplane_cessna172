@@ -311,6 +311,12 @@ param set-default WEIGHT_GROSS 1000.0    # Gross weight (kg)
 param set-default FW_MAN_P_MAX 45        # Max manual pitch
 param set-default FW_MAN_R_MAX 50        # Max manual roll
 
+# Carried over from px4xplane defaults — MPC_* are no-ops for fixed-wing flight
+# but kept for parity in case the airframe is later reused in MC-capable modes.
+param set-default MPC_MAN_Y_MAX 20.0
+param set-default MPC_JERK_AUTO 1.0
+param set-default MPC_JERK_MAX 3.0
+
 # Logging
 param set-default SDLOG_MODE 0           # Disabled for SITL
 

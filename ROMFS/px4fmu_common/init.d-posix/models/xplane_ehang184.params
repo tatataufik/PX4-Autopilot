@@ -1,0 +1,59 @@
+#!/bin/sh
+# Default params for X-Plane eVTOL air taxi (Ehang 184) SITL (SYS_AUTOSTART=5010)
+# Sourced by px4-rc.xplanesim after the airframe init script runs.
+
+# EKF2 — tuned for X-Plane sensor rates
+param set-default EKF2_GPS_DELAY     10
+param set-default EKF2_MULTI_IMU     1
+param set-default SENS_IMU_MODE      1
+param set-default EKF2_ACC_NOISE     0.8
+param set-default EKF2_GYR_NOISE     0.03
+
+# Controller integration rate — match X-Plane's actual RREF delivery cadence
+# (~60-80 Hz). Default 250 Hz produced a 3× sample-rate mismatch that floored
+# rate σ ≈ 0.72 rad/s independent of PID gain values (verified via MAVLink
+# parameter readback after three failed tuning rounds at the same σ).
+param set-default IMU_INTEG_RATE     100
+
+# MC rate controller — bisected after vehicle crashed at the second-retune
+# values (P=0.049, D=0): controller was too sluggish to recover from mission-
+# mode hard turns at 15 m/s. Restore P partway and reintroduce small D so the
+# rate loop has damping headroom for big disturbances. K stays equalized at
+# 2.25 (airframe) to preserve the pitch/roll symmetry fix.
+param set-default MC_ROLLRATE_P      0.08
+param set-default MC_ROLLRATE_I      0.02
+param set-default MC_ROLLRATE_D      0.005
+param set-default MC_PITCHRATE_P     0.08
+param set-default MC_PITCHRATE_I     0.02
+param set-default MC_PITCHRATE_D     0.005
+param set-default MC_YAWRATE_P       0.15
+param set-default MC_YAWRATE_I       0.05
+param set-default MC_YAWRATE_D       0.0
+
+# Attitude controller — bisected between the oscillating 4.0 and the crashed
+# 2.25.
+param set-default MC_ROLL_P          3.0
+param set-default MC_PITCH_P         3.0
+param set-default MC_YAW_P           2.0
+
+# Rate limits — yaw ceiling raised 30→90 deg/s (2026-05-23) because the
+# previous 30 deg/s cap took 12s for a full rotation, which was noticeably
+# slow at the stick and during mission heading changes.
+param set-default MC_ROLLRATE_MAX    60.0
+param set-default MC_PITCHRATE_MAX   60.0
+param set-default MC_YAWRATE_MAX     90.0
+
+# Battery — 6S pack (large eVTOL)
+param set-default BAT1_N_CELLS       6
+param set-default BAT1_V_CHARGED     4.20
+param set-default BAT1_V_EMPTY       3.50
+
+# Hover throttle estimate for heavy vehicle
+param set-default MPC_THR_HOVER      0.65
+
+# Velocity / position controller — second -25% on XY (horiz σ jumped to 5.4
+# m/s once MISSION mode introduced position commands). Z velocity P -15% for
+# vz σ≈1.14 m/s bobbing.
+param set-default MPC_XY_VEL_P_ACC  1.125
+param set-default MPC_XY_VEL_I_ACC  0.068
+param set-default MPC_Z_VEL_P_ACC   3.4

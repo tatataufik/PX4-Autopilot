@@ -1,0 +1,30 @@
+# X-Plane DREF map — Cessna 172 fixed-wing (5001_xplane_cessna172)
+#
+# PX4 control allocation output (0-indexed channels):
+#   channel 0 → Throttle (FUNC 101)
+#   channel 1 → Aileron  (FUNC 201)
+#   channel 2 → Elevator (FUNC 202)
+#   channel 3 → Rudder   (FUNC 203)
+#   channel 4 → Flaps    (FUNC 207)
+
+{
+    "settings": { "debug": 0 },
+
+    "sim/operation/override/override_joystick"      : { "type": "fixed", "value": 1 },
+    "sim/operation/override/override_throttles"     : { "type": "fixed", "value": 1 },
+    "sim/operation/override/override_flightcontrol" : { "type": "fixed", "value": 1 },
+
+    # Engine
+    "sim/flightmodel/engine/ENGN_running[0]"  : { "type": "running", "channel": 0 },
+    "sim/flightmodel/engine/ENGN_thro_use[0]" : { "type": "range",   "channel": 0, "range": 1.0 },
+
+    # Control surfaces (output is -1..1, range = max deflection in degrees)
+    "sim/flightmodel/controls/wing1l_ail1def" : { "type": "angle", "channel": 1, "range":  20.0 },
+    "sim/flightmodel/controls/wing1r_ail1def" : { "type": "angle", "channel": 1, "range": -20.0 },
+    "sim/flightmodel/controls/hstab1_elv1def" : { "type": "angle", "channel": 2, "range": -20.0 },
+    "sim/flightmodel/controls/hstab2_elv1def" : { "type": "angle", "channel": 2, "range": -20.0 },
+    "sim/flightmodel/controls/vstab1_rud1def" : { "type": "angle", "channel": 3, "range":  20.0 },
+
+    # Flaps (output 0..1, range = max deflection in degrees)
+    "sim/flightmodel/controls/flaprat"        : { "type": "range", "channel": 4, "range":  1.0 }
+}
