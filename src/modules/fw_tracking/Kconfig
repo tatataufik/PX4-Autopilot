@@ -1,7 +1,0 @@
-menuconfig MODULES_FW_TRACKING
-	bool "fw_tracking"
-	default n
-	---help---
-		Fixed-wing TRACKING mode — visual-servo from external seeker errors.
-		Receives TRACKING_MESSAGE (MAVLink ID 11045) and runs roll/pitch/throttle
-		PIDs, publishing vehicle_attitude_setpoint when in NAVIGATION_STATE_EXTERNAL1.

@@ -1,7 +1,8 @@
 /**
- * fw_tracking — fixed-wing visual-servo tracking mode for PX4.
+ * tracking — visual-servo tracking mode for PX4 (fixed-wing + multicopter).
  *
- * Port of satria-firmware ModeTracking (ArduPlane) to PX4.
+ * Port of satria-firmware ModeTracking (ArduPlane) to PX4, extended to
+ * cover multicopter airframes at runtime.
  *
  * Design
  * ──────
@@ -9,8 +10,17 @@
  * ID 11045) with normalised errors errorx/errory ∈ [-1, 1].  The MAVLink
  * receiver decodes the message and publishes it on the 'tracking_message'
  * uORB topic.  This module subscribes to that topic, applies deadband,
- * settle-ramp, and three PID controllers (roll, pitch, throttle), then
- * publishes vehicle_attitude_setpoint.
+ * settle-ramp, and PID controllers, then publishes vehicle_attitude_setpoint.
+ *
+ * Vehicle-type-aware publish path
+ * ───────────────────────────────
+ *   FIXED_WING : thrust_body[0] = throttle/100   (forward body axis)
+ *                throttle PID input = pitch error (pitch-for-airspeed)
+ *
+ *   ROTARY_WING: thrust_body[2] = -throttle/100  (NED, negative = up)
+ *                throttle PID input = altitude error vs TRK_TGT_ALT
+ *                (pitch-for-airspeed makes no sense on a copter;
+ *                 throttle holds altitude while roll/pitch chase target)
  *
  * Activation
  * ──────────
@@ -58,17 +68,17 @@
 
 using namespace time_literals;
 
-class FwTracking : public ModuleBase, public ModuleParams
+class Tracking : public ModuleBase, public ModuleParams
 {
 public:
 	static Descriptor desc;
 
-	FwTracking() : ModuleParams(nullptr) { reset_pids(); }
+	Tracking() : ModuleParams(nullptr) { reset_pids(); }
 
-	~FwTracking() override = default;
+	~Tracking() override = default;
 
 	static int task_spawn(int argc, char *argv[]);
-	static FwTracking *instantiate(int argc, char *argv[]);
+	static Tracking *instantiate(int argc, char *argv[]);
 	static int custom_command(int argc, char *argv[]);
 	static int print_usage(const char *reason = nullptr);
 	static int run_trampoline(int argc, char *argv[]);
@@ -127,7 +137,7 @@ private:
 	void update_pid_gains();
 };
 
-void FwTracking::reset_pids()
+void Tracking::reset_pids()
 {
 	_pid_roll.resetIntegral();
 	_pid_roll.resetDerivative();
@@ -139,7 +149,7 @@ void FwTracking::reset_pids()
 	_errory_rad = 0.f;
 }
 
-void FwTracking::update_pid_gains()
+void Tracking::update_pid_gains()
 {
 	_pid_roll.setGains(_p_roll_p.get(), _p_roll_i.get(), _p_roll_d.get());
 	_pid_roll.setOutputLimit(math::radians(45.f));   /* ±45 deg bank limit */
@@ -154,10 +164,10 @@ void FwTracking::update_pid_gains()
 	_pid_throttle.setIntegralLimit(25.f);
 }
 
-void FwTracking::run()
+void Tracking::run()
 {
 	update_pid_gains();
-	PX4_INFO("fw_tracking: started");
+	PX4_INFO("tracking: started");
 
 	while (!should_exit()) {
 
@@ -177,13 +187,13 @@ void FwTracking::run()
 			_mode_entry_us = hrt_absolute_time();
 			_last_telem_us = 0;
 			_close_prev    = false;
-			PX4_INFO("fw_tracking: TRACKING active");
+			PX4_INFO("tracking: TRACKING active");
 		}
 
 		/* ── on mode exit ──────────────────────────────────── */
 		if (!active && _was_active) {
 			reset_pids();
-			PX4_INFO("fw_tracking: TRACKING exit");
+			PX4_INFO("tracking: TRACKING exit");
 		}
 
 		_was_active = active;
@@ -301,27 +311,44 @@ void FwTracking::run()
 		                                math::radians(30.f));
 
 		/* ── throttle PID ───────────────────────────────────── */
-		/* Mirrors satria: cruise ± pid_out, clamped to [3/4*cruise, 7/5*cruise] */
-		const float cruise     = _p_cruise_thr.get();
-		const float pitch_err  = actual_pitch_rad - pitch_sp_rad;
+		/* Mirrors satria: cruise ± pid_out, clamped to [3/4*cruise, 7/5*cruise].
+		 * Vehicle-type-aware error source:
+		 *   FIXED_WING : pitch_err (pitch-for-airspeed)
+		 *   ROTARY_WING: altitude_err vs TRK_TGT_ALT (throttle holds altitude) */
+		const bool is_copter = (status.vehicle_type == vehicle_status_s::VEHICLE_TYPE_ROTARY_WING);
+		const float cruise = _p_cruise_thr.get();
+
+		float thro_input;
+
+		if (is_copter) {
+			/* +alt_err = below target → need more throttle. Feed −alt_err so
+			 * PID(setpoint=0, input=-alt_err) yields positive delta. */
+			const float alt_err_m = has_gps ? (_p_tgt_alt.get() - gpos.alt) : 0.f;
+			thro_input = -alt_err_m;
+		} else {
+			thro_input = actual_pitch_rad - pitch_sp_rad;
+		}
+
 		_pid_throttle.setSetpoint(0.f);
-		const float thro_delta  = _pid_throttle.update(-pitch_err, dt) * ramp;
+		const float thro_delta  = _pid_throttle.update(-thro_input, dt) * ramp;
 		const float throttle_sp = math::constrain(cruise + thro_delta,
 		                                           cruise * 0.75f,
 		                                           cruise * 1.4f);
 
 		/* ── publish attitude setpoint ──────────────────────── */
 		/* PX4 v1 VehicleAttitudeSetpoint uses q_d quaternion + thrust_body.
-		 * For fixed wing: thrust_body[0] = throttle [0,1] (forward axis). */
+		 *   FIXED_WING : thrust_body[0] = throttle [0,1]  (forward body axis)
+		 *   ROTARY_WING: thrust_body[2] = −throttle [0,1] (NED, negative = up) */
 		vehicle_attitude_setpoint_s att_sp{};
 		att_sp.timestamp = now;
 
 		const matrix::Quatf q_sp(matrix::Eulerf(roll_sp_rad, pitch_sp_rad, euler.psi()));
 		q_sp.copyTo(att_sp.q_d);
 
-		att_sp.thrust_body[0] = throttle_sp * 0.01f;
+		const float thrust_norm = throttle_sp * 0.01f;
+		att_sp.thrust_body[0] = is_copter ? 0.f : thrust_norm;
 		att_sp.thrust_body[1] = 0.f;
-		att_sp.thrust_body[2] = 0.f;
+		att_sp.thrust_body[2] = is_copter ? -thrust_norm : 0.f;
 
 		_att_sp_pub.publish(att_sp);
 
@@ -335,7 +362,8 @@ void FwTracking::run()
 				         (double)math::degrees(ex), (double)math::degrees(ey));
 			}
 
-			PX4_INFO("TRK p_ahrs=%.1f nav=%.1f thr=%.1f%% ramp=%.2f",
+			PX4_INFO("TRK[%s] p_ahrs=%.1f nav=%.1f thr=%.1f%% ramp=%.2f",
+			         is_copter ? "MC" : "FW",
 			         (double)math::degrees(actual_pitch_rad),
 			         (double)math::degrees(pitch_sp_rad),
 			         (double)throttle_sp,
@@ -343,19 +371,19 @@ void FwTracking::run()
 		}
 	}
 
-	PX4_INFO("fw_tracking: exiting");
+	PX4_INFO("tracking: exiting");
 }
 
-int FwTracking::run_trampoline(int argc, char *argv[])
+int Tracking::run_trampoline(int argc, char *argv[])
 {
 	return ModuleBase::run_trampoline_impl(desc, [](int ac, char *av[]) -> ModuleBase * {
-		return FwTracking::instantiate(ac, av);
+		return Tracking::instantiate(ac, av);
 	}, argc, argv);
 }
 
-int FwTracking::task_spawn(int argc, char *argv[])
+int Tracking::task_spawn(int argc, char *argv[])
 {
-	desc.task_id = px4_task_spawn_cmd("fw_tracking",
+	desc.task_id = px4_task_spawn_cmd("tracking",
 					  SCHED_DEFAULT,
 					  SCHED_PRIORITY_DEFAULT,
 					  PX4_STACK_ADJUSTED(2000),
@@ -370,17 +398,17 @@ int FwTracking::task_spawn(int argc, char *argv[])
 	return 0;
 }
 
-FwTracking *FwTracking::instantiate(int argc, char *argv[])
+Tracking *Tracking::instantiate(int argc, char *argv[])
 {
-	return new FwTracking();
+	return new Tracking();
 }
 
-int FwTracking::custom_command(int argc, char *argv[])
+int Tracking::custom_command(int argc, char *argv[])
 {
 	return print_usage("unknown command");
 }
 
-int FwTracking::print_usage(const char *reason)
+int Tracking::print_usage(const char *reason)
 {
 	if (reason) {
 		PX4_WARN("%s\n", reason);
@@ -399,16 +427,16 @@ Active only when nav_state == NAVIGATION_STATE_EXTERNAL1 (23).
 Features: GPS proximity alerts, 1 Hz status telemetry, configurable cruise throttle.
 )DESCR_STR");
 
-	PRINT_MODULE_USAGE_NAME("fw_tracking", "controller");
+	PRINT_MODULE_USAGE_NAME("tracking", "controller");
 	PRINT_MODULE_USAGE_COMMAND("start");
 	PRINT_MODULE_USAGE_DEFAULT_COMMANDS();
 
 	return 0;
 }
 
-ModuleBase::Descriptor FwTracking::desc{FwTracking::task_spawn, FwTracking::custom_command, FwTracking::print_usage};
+ModuleBase::Descriptor Tracking::desc{Tracking::task_spawn, Tracking::custom_command, Tracking::print_usage};
 
-extern "C" __EXPORT int fw_tracking_main(int argc, char *argv[])
+extern "C" __EXPORT int tracking_main(int argc, char *argv[])
 {
-	return ModuleBase::main(FwTracking::desc, argc, argv);
+	return ModuleBase::main(Tracking::desc, argc, argv);
 }

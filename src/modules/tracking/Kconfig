@@ -1,0 +1,10 @@
+menuconfig MODULES_TRACKING
+	bool "tracking"
+	default n
+	---help---
+		TRACKING mode — visual-servo from external seeker errors.
+		Receives TRACKING_MESSAGE (MAVLink ID 11045) and runs roll/pitch/throttle
+		PIDs, publishing vehicle_attitude_setpoint when in NAVIGATION_STATE_EXTERNAL1.
+		Vehicle-type-aware: fixed-wing uses thrust_body[0] with pitch-for-airspeed
+		throttle; multicopter uses thrust_body[2] with altitude-hold throttle vs
+		TRK_TGT_ALT.

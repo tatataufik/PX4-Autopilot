@@ -30,6 +30,6 @@ fw_autotune_attitude_control start
 land_detector start fixedwing
 
 #
-# Start visual-servo tracking controller.
+# Start visual-servo tracking controller (vehicle-type aware).
 #
-fw_tracking start
+tracking start
