@@ -539,24 +539,100 @@ void SimulatorXPlane::handle_rref(const uint8_t *pkt, size_t len)
 	}
 
 	if (imu_updated && _rref_gyro_mask == 0x7 && _rref_accel_mask == 0x7) {
-		// Gyro bias estimation — first N samples build the mean (vehicle is
-		// assumed stationary at SITL boot). After that, _gyro_bias_* is
-		// subtracted from every sample in publish_imu().
-		if (!_gyro_bias_locked) {
-			_gyro_bias_sum_x += _gyro_x;
-			_gyro_bias_sum_y += _gyro_y;
-			_gyro_bias_sum_z += _gyro_z;
-			_gyro_bias_count++;
-			if (_gyro_bias_count >= GYRO_BIAS_SAMPLES) {
-				_gyro_bias_x = _gyro_bias_sum_x / _gyro_bias_count;
-				_gyro_bias_y = _gyro_bias_sum_y / _gyro_bias_count;
-				_gyro_bias_z = _gyro_bias_sum_z / _gyro_bias_count;
-				_gyro_bias_locked = true;
-				PX4_INFO("Gyro bias locked (%d samples): X=%.4f Y=%.4f Z=%.4f rad/s",
-					 _gyro_bias_count,
-					 (double)_gyro_bias_x, (double)_gyro_bias_y, (double)_gyro_bias_z);
+		// 1st-order IIR low-pass on IMU samples. Smooths out X-Plane physics
+		// jitter that would otherwise destabilize the EKF.
+		if (!_sensor_filt_initialized) {
+			_gyro_filt_x  = _gyro_x;  _gyro_filt_y  = _gyro_y;  _gyro_filt_z  = _gyro_z;
+			_accel_filt_x = _accel_x; _accel_filt_y = _accel_y; _accel_filt_z = _accel_z;
+			_sensor_filt_initialized = true;
+		} else {
+			const float a = SENSOR_LPF_ALPHA;
+			_gyro_filt_x  = a * _gyro_x  + (1.0f - a) * _gyro_filt_x;
+			_gyro_filt_y  = a * _gyro_y  + (1.0f - a) * _gyro_filt_y;
+			_gyro_filt_z  = a * _gyro_z  + (1.0f - a) * _gyro_filt_z;
+			_accel_filt_x = a * _accel_x + (1.0f - a) * _accel_filt_x;
+			_accel_filt_y = a * _accel_y + (1.0f - a) * _accel_filt_y;
+			_accel_filt_z = a * _accel_z + (1.0f - a) * _accel_filt_z;
+		}
+
+		// Per-axis gyro bias estimation. Calibration runs while the vehicle
+		// is stationary (groundspeed < threshold) — matches the px4xplane
+		// plugin's AccelCalibration gating instead of using a variance gate.
+		// X-Plane landing-gear physics produces large natural gyro jitter
+		// (σ > 10°/s on some models) which any sensible variance gate would
+		// reject; gating on groundspeed instead lets calibration converge.
+		const bool vel_ok = (_rref_vel_mask == 0x7);
+		const float gs = vel_ok ? sqrtf(_vel_n*_vel_n + _vel_e*_vel_e + _vel_d*_vel_d) : 1e9f;
+		const bool stationary = vel_ok && (gs < ACCEL_CAL_STATIONARY_VEL);
+
+		auto accumulate_axis = [&](float sample,
+		                           float &sum, int &count,
+		                           float &bias_out, bool &locked) {
+			if (locked) { return; }
+			if (!stationary) {
+				// Vehicle moved — restart this axis' window.
+				sum = 0; count = 0;
+				return;
+			}
+			sum += sample;
+			count++;
+			if (count >= GYRO_BIAS_SAMPLES) {
+				bias_out = sum / count;
+				locked = true;
+			}
+		};
+		// Calibrate on FILTERED samples so the gate sees the smoothed signal.
+		accumulate_axis(_gyro_filt_x, _gyro_bias_sum_x,
+		                _gyro_bias_count_x, _gyro_bias_x, _gyro_bias_locked_x);
+		accumulate_axis(_gyro_filt_y, _gyro_bias_sum_y,
+		                _gyro_bias_count_y, _gyro_bias_y, _gyro_bias_locked_y);
+		accumulate_axis(_gyro_filt_z, _gyro_bias_sum_z,
+		                _gyro_bias_count_z, _gyro_bias_z, _gyro_bias_locked_z);
+
+		if (!_gyro_bias_reported && _gyro_bias_locked_x
+		    && _gyro_bias_locked_y && _gyro_bias_locked_z) {
+			PX4_INFO("Gyro bias locked (%d samples/axis, %u windows rejected): "
+				 "X=%.4f Y=%.4f Z=%.4f rad/s",
+				 GYRO_BIAS_SAMPLES, (unsigned)_gyro_bias_rejects,
+				 (double)_gyro_bias_x, (double)_gyro_bias_y, (double)_gyro_bias_z);
+			_gyro_bias_reported = true;
+		}
+
+		// Accelerometer magnitude calibration (same approach as the px4xplane
+		// plugin's AccelCalibration). Only runs while vehicle is stationary
+		// (ground-speed below threshold) and accel + velocity data are both
+		// valid. If vehicle moves before calibration completes, restart.
+		if (!_accel_calibrated && vel_ok) {
+			if (stationary) {
+				_accel_cal_stationary_count++;
+				if (_accel_cal_stationary_count >= ACCEL_CAL_WAIT_SAMPLES) {
+					// Use filtered accel for calibration so the magnitude
+					// estimate isn't dominated by X-Plane jitter.
+					const float mag = sqrtf(_accel_filt_x*_accel_filt_x
+					                      + _accel_filt_y*_accel_filt_y
+					                      + _accel_filt_z*_accel_filt_z);
+					_accel_cal_sum_mag += mag;
+					_accel_cal_count++;
+					if (_accel_cal_count >= ACCEL_CAL_SAMPLES) {
+						const float measured = _accel_cal_sum_mag / _accel_cal_count;
+						if (measured > 0.1f) {
+							_accel_scale_factor = GRAVITY_MSS / measured;
+							_accel_calibrated = true;
+							PX4_INFO("Accel calibrated: measured |g|=%.4f m/s², "
+								 "scale=%.4f (%.2f%% correction)",
+								 (double)measured, (double)_accel_scale_factor,
+								 (double)((_accel_scale_factor - 1.0f) * 100.0f));
+						}
+					}
+				}
+			} else {
+				// Aircraft moved before calibration completed — restart.
+				_accel_cal_stationary_count = 0;
+				_accel_cal_count = 0;
+				_accel_cal_sum_mag = 0.f;
 			}
 		}
+
 		perf_count(_perf_interval);
 		publish_imu(t);
 	}
@@ -658,25 +734,30 @@ void SimulatorXPlane::apply_data_group(uint32_t gid, const float *d)
 
 void SimulatorXPlane::publish_imu(hrt_abstime t)
 {
-	// Add small noise so DataValidator does not flag identical-at-rest samples
-	// as STALE after 100 reads.
-	const float gyro_n  = 0.0005f;   // rad/s RMS
-	const float accel_n = 0.02f;     // m/s^2 RMS
+	// Noise σ values matched to px4xplane plugin's MEMS sensor model
+	// (BMI088/ICM-20689 gyro + SIH-reference accel vibration). Below these
+	// levels EKF2 over-trusts the sensor and reads small X-Plane physics
+	// offsets as catastrophic bias — which blocks arming and causes jumpy
+	// initialization. The plugin learned this the hard way; we inherit the
+	// lesson. Mag noise lowered to match plugin's value too (was 10× too high).
+	const float gyro_n  = 0.01f;     // rad/s RMS (~0.57°/s, BMI088 datasheet)
+	const float accel_n = 0.1f;      // m/s² RMS (SIH reference)
 
+	// Publish FILTERED accel with magnitude scaling. The IIR low-pass kills
+	// X-Plane physics jitter before noise injection; scaling normalises |a|
+	// to ≈1 g (no-op until calibration completes).
 	_px4_accel.set_temperature(20.0f);
 	_px4_accel.update(t,
-		_accel_x + xplane_wgn() * accel_n,
-		_accel_y + xplane_wgn() * accel_n,
-		_accel_z + xplane_wgn() * accel_n);
+		_accel_filt_x * _accel_scale_factor + xplane_wgn() * accel_n,
+		_accel_filt_y * _accel_scale_factor + xplane_wgn() * accel_n,
+		_accel_filt_z * _accel_scale_factor + xplane_wgn() * accel_n);
 
-	// Subtract estimated bias before publishing. Bias is locked after the
-	// startup calibration window (see GYRO_BIAS_SAMPLES); before that,
-	// _gyro_bias_* is zero so this is a no-op.
+	// Publish FILTERED gyro with bias subtracted (no-op pre-calibration).
 	_px4_gyro.set_temperature(20.0f);
 	_px4_gyro.update(t,
-		(_gyro_x - _gyro_bias_x) + xplane_wgn() * gyro_n,
-		(_gyro_y - _gyro_bias_y) + xplane_wgn() * gyro_n,
-		(_gyro_z - _gyro_bias_z) + xplane_wgn() * gyro_n);
+		(_gyro_filt_x - _gyro_bias_x) + xplane_wgn() * gyro_n,
+		(_gyro_filt_y - _gyro_bias_y) + xplane_wgn() * gyro_n,
+		(_gyro_filt_z - _gyro_bias_z) + xplane_wgn() * gyro_n);
 }
 
 void SimulatorXPlane::update_mag_earth()
@@ -723,11 +804,14 @@ void SimulatorXPlane::publish_mag(hrt_abstime t)
 	float bx, by, bz;
 	mag_body(bx, by, bz);
 	_px4_mag.set_temperature(20.0f);
-	// Tiny noise — same reason as the IMU path.
+	// Mag noise σ = 0.0002 Gauss (200 nT) — matches px4xplane plugin's
+	// MEMS magnetometer model. Previous 0.002 was 10× too high and made
+	// EKF2 under-trust mag heading.
+	const float mag_n = 0.0002f;
 	_px4_mag.update(t,
-		bx + xplane_wgn() * 0.002f,
-		by + xplane_wgn() * 0.002f,
-		bz + xplane_wgn() * 0.003f);
+		bx + xplane_wgn() * mag_n,
+		by + xplane_wgn() * mag_n,
+		bz + xplane_wgn() * mag_n);
 }
 
 void SimulatorXPlane::publish_baro(hrt_abstime t)

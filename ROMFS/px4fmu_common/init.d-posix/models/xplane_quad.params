@@ -10,21 +10,14 @@ param set-default SENS_IMU_MODE      1
 param set-default EKF2_ACC_NOISE     0.5
 param set-default EKF2_GYR_NOISE     0.02
 
-# MC rate controller — light 5" quad gains
-param set-default MC_ROLLRATE_P      0.15
-param set-default MC_ROLLRATE_I      0.05
-param set-default MC_ROLLRATE_D      0.003
-param set-default MC_PITCHRATE_P     0.15
-param set-default MC_PITCHRATE_I     0.05
-param set-default MC_PITCHRATE_D     0.003
-param set-default MC_YAWRATE_P       0.20
-param set-default MC_YAWRATE_I       0.10
-param set-default MC_YAWRATE_D       0.0
-
-# Attitude controller
-param set-default MC_ROLL_P          6.0
-param set-default MC_PITCH_P         6.0
-param set-default MC_YAW_P           2.5
+# Attitude / rate controller — REMOVED (2026-05-24).
+# Previous values (MC_ROLL_P=6.0, MC_PITCH_P=6.0) were 20× more aggressive than
+# the airframe's 0.3. Combined with our RREF-based bridge's higher sensor
+# noise (vs the px4xplane plugin's Kalman-smoothed stream), the aggressive
+# gains caused the controller to amplify noise into actuator commands →
+# vehicle diverged on takeoff. Letting airframe's MC_*_P values stand
+# matches the px4xplane-sitl branch's effective tuning, which is the
+# known-stable configuration for this airframe.
 
 # Battery — 4S LiPo
 param set-default BAT1_N_CELLS       4

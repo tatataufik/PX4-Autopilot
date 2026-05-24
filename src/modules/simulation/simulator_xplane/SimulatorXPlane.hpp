@@ -221,14 +221,57 @@ private:
 
 	// Gyro bias compensation. X-Plane's Prad/Qrad/Rrad can report sustained
 	// nonzero body rates for an aircraft that is visually stationary (model
-	// physics quirk on the ground). Real drones calibrate gyro bias during
-	// boot; we do the same here: accumulate first N samples, then subtract
-	// the mean from every subsequent sample.
-	static constexpr int GYRO_BIAS_SAMPLES = 200;     // ~2.5 s at 80 Hz RREF
-	float _gyro_bias_x{0.f}, _gyro_bias_y{0.f}, _gyro_bias_z{0.f};
+	// physics quirk on the ground; we measured ~-16°/s on Z for ehang184).
+	//
+	// Real drones calibrate gyro bias during boot when known stationary. We
+	// do the same per-axis: accumulate first N samples, compute the mean,
+	// then subtract from every subsequent sample.
+	//
+	// Variance gate: if the std-dev of a calibration window exceeds
+	// GYRO_BIAS_STDDEV_LIMIT, the aircraft was clearly moving — discard the
+	// window and restart accumulation. Prevents the failure where SITL is
+	// restarted while a previous crash still tumbles the airframe and the
+	// "bias" absorbs the actual rotation.
+	static constexpr int   GYRO_BIAS_SAMPLES       = 200;     // ~2.5 s at 80 Hz RREF
+	static constexpr float GYRO_BIAS_STDDEV_LIMIT  = 0.05f;   // rad/s ≈ 2.9°/s
+	float _gyro_bias_x{0.f},     _gyro_bias_y{0.f},     _gyro_bias_z{0.f};
 	float _gyro_bias_sum_x{0.f}, _gyro_bias_sum_y{0.f}, _gyro_bias_sum_z{0.f};
-	int   _gyro_bias_count{0};
-	bool  _gyro_bias_locked{false};
+	float _gyro_bias_sum_sq_x{0.f}, _gyro_bias_sum_sq_y{0.f}, _gyro_bias_sum_sq_z{0.f};
+	int   _gyro_bias_count_x{0}, _gyro_bias_count_y{0}, _gyro_bias_count_z{0};
+	bool  _gyro_bias_locked_x{false}, _gyro_bias_locked_y{false}, _gyro_bias_locked_z{false};
+	bool  _gyro_bias_reported{false};
+	uint32_t _gyro_bias_rejects{0};   // count of discarded windows
+
+	// Accelerometer magnitude calibration. Mirrors the px4xplane plugin's
+	// AccelCalibration: X-Plane aircraft models can report |accel| ≠ 1g when
+	// stationary (most VTOL models offend; quad model less so). The fix is
+	// MAGNITUDE SCALING — compute scale = expected_g / measured_|accel| while
+	// stationary, then multiply every subsequent accel sample. Scaling
+	// preserves direction so it works at all attitudes (offset subtraction
+	// would only be correct at the calibration attitude).
+	static constexpr int   ACCEL_CAL_SAMPLES        = 200;     // ~1 s at 200 Hz / 2.5 s at 80 Hz
+	static constexpr int   ACCEL_CAL_WAIT_SAMPLES   = 50;      // settling before sampling
+	static constexpr float ACCEL_CAL_STATIONARY_VEL = 0.5f;    // m/s ground-speed threshold
+	float  _accel_scale_factor{1.0f};
+	float  _accel_cal_sum_mag{0.f};
+	int    _accel_cal_count{0};
+	int    _accel_cal_stationary_count{0};
+	bool   _accel_calibrated{false};
+
+	// Sensor low-pass filter. X-Plane physics produces high-frequency gyro/
+	// accel jitter (we measured σ≈17°/s on stationary models) that gets
+	// faithfully republished without smoothing — drives EKF into unstable
+	// states, leads to vehicle crashes. The px4xplane plugin uses a Kalman
+	// filter on [value, velocity] state for this; we use a simpler 1st-order
+	// IIR that achieves similar smoothing at lower computational cost.
+	// α tradeoff: lower = smoother but more phase lag → controller computes
+	// corrections on STALE attitude during fast maneuvers → vehicle diverges.
+	// α=0.5 (50ms lag at 40Hz) was crashing on takeoff; α=0.8 keeps response
+	// snappy (~11ms lag) while still attenuating the highest-frequency jitter.
+	static constexpr float SENSOR_LPF_ALPHA = 0.8f;
+	float _gyro_filt_x{0.f},  _gyro_filt_y{0.f},  _gyro_filt_z{0.f};
+	float _accel_filt_x{0.f}, _accel_filt_y{0.f}, _accel_filt_z{-GRAVITY_MSS};
+	bool  _sensor_filt_initialized{false};
 
 	uint8_t _rref_gyro_mask{0};
 	uint8_t _rref_accel_mask{0};

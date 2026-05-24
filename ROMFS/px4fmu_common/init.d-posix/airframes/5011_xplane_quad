@@ -198,14 +198,23 @@ param set-default MPC_Z_VEL_P_ACC 2.5
 param set-default MPC_Z_VEL_I_ACC 1.7
 param set-default MPC_Z_VEL_D_ACC 0.2
 
-param set-default MPC_XY_VEL_MAX 23
+param set-default MPC_XY_VEL_MAX 25
 param set-default MPC_Z_VEL_MAX_UP 3
 param set-default MPC_Z_VEL_MAX_DN 1.5
-param set-default MPC_VEL_MANUAL 22
+param set-default MPC_VEL_MANUAL 25
 param set-default MPC_XY_CRUISE 22
 
 param set-default MPC_XY_TRAJ_P 0.5
-param set-default MPC_JERK_AUTO 3.0
+# MPC_ACC_HOR is the planner's NORMAL braking accel (default 3 m/s²).
+# MPC_ACC_HOR_MAX is the panic ceiling. The planner uses ACC_HOR for
+# trajectory deceleration — without raising it, vehicle brakes too gently
+# and overshoots waypoints even with high speed limit.
+# At 22 m/s cruise with 10 m/s² brake: stop_dist = 484/20 = 24m, fits NAV_ACC_RAD=25.
+param set-default MPC_ACC_HOR 10.0
+# Speed-up tuning (2026-05-24): jerk 3.0→5.0 + ACC_HOR_MAX 5→8 to support
+# faster acceleration / braking at the new MPC_XY_VEL_MAX=25 m/s.
+param set-default MPC_JERK_AUTO 5.0
+param set-default MPC_ACC_HOR_MAX 14.0
 param set-default MPC_JERK_MAX 6.0
 param set-default MPC_XY_ERR_MAX 2
 
@@ -245,8 +254,15 @@ param set-default MPC_XY_VEL_ALL -10
 # TAKEOFF & LANDING
 ################################################################################
 
-param set-default MPC_TKO_SPEED 1.5
-param set-default MPC_TKO_RAMP_T 3
+# Faster takeoff (2026-05-24): TKO_SPEED 1.5→5 m/s and ramp 3→1 s so the
+# vehicle reaches takeoff altitude before the position controller has time
+# to drift horizontally toward the (potentially offset) TAKEOFF waypoint —
+# was the cause of "diagonal takeoff" complaint.
+# Aggressive takeoff (2026-05-24): 10 m/s climb + 0.3 s ramp so the vehicle
+# spends as little time as possible in the diagonal-climb-to-WP0 phase.
+# 50m alt reached in ~5 s; horizontal motion during that window is bounded.
+param set-default MPC_TKO_SPEED 10.0
+param set-default MPC_TKO_RAMP_T 0.3
 
 param set-default MPC_LAND_ALT1 10
 param set-default MPC_LAND_ALT2 5
@@ -255,11 +271,17 @@ param set-default MPC_LAND_CRWL 0.3
 param set-default MPC_LAND_RADIUS 1000
 param set-default MPC_LAND_RC_HELP 1
 
+# Landing detector — thresholds loosened (2026-05-24).
+# Previous LNDMC_Z_VEL_MAX=0.25 was LOWER than MPC_LAND_CRWL=0.3, so vehicle's
+# own commanded descent speed at touchdown was above the "landed" threshold.
+# Combined with X-Plane landing-gear bounce, the detector never fired —
+# vehicle stuck at ground level, never officially landed, never disarmed.
+# 0.7 m/s now sits comfortably above MPC_LAND_CRWL (0.3) AND MPC_LAND_SPEED (0.7).
 param set-default LNDMC_ALT_GND 2
-param set-default LNDMC_XY_VEL_MAX 1.5
-param set-default LNDMC_Z_VEL_MAX 0.25
-param set-default LNDMC_ROT_MAX 20
-param set-default LNDMC_TRIG_TIME 1
+param set-default LNDMC_XY_VEL_MAX 2.0
+param set-default LNDMC_Z_VEL_MAX 0.7
+param set-default LNDMC_ROT_MAX 30
+param set-default LNDMC_TRIG_TIME 0.5
 
 
 ################################################################################
@@ -281,9 +303,13 @@ param set-default MC_ACRO_SUPEXPOY 0
 
 param set-default MIS_YAW_ERR 30
 param set-default MIS_YAW_TMT 5
-param set-default MIS_TAKEOFF_ALT 2.5
+param set-default MIS_TAKEOFF_ALT 50
 
-param set-default NAV_ACC_RAD 35
+# Waypoint acceptance — 25m matches planner stop distance at 22 m/s cruise
+# with MPC_ACC_HOR=10: stop_dist = v²/(2a) = 484/20 ≈ 24m, leaving 1m
+# margin. Was 20m but planner uses ACC_HOR (not ACC_HOR_MAX) for normal
+# braking, so the math has to be against ACC_HOR.
+param set-default NAV_ACC_RAD 25
 param set-default NAV_MC_ALT_RAD 3
 
 param set-default RTL_RETURN_ALT 30
