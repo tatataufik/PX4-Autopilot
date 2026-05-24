@@ -558,18 +558,12 @@ MavlinkMissionManager::send()
 	}
 
 	/* check for timed-out operations */
-	if (_state == MAVLINK_WPM_STATE_GETLIST && (_time_last_sent > 0)
-	    && hrt_elapsed_time(&_time_last_sent) > MAVLINK_MISSION_RETRY_TIMEOUT_DEFAULT) {
+	if (_state != MAVLINK_WPM_STATE_IDLE && (_time_last_recv > 0)
+	    && hrt_elapsed_time(&_time_last_recv) > MAVLINK_MISSION_PROTOCOL_TIMEOUT_DEFAULT) {
 
-		// try to request item again after timeout
-		send_mission_request(_transfer_partner_sysid, _transfer_partner_compid, _transfer_seq);
-
-	} else if (_state != MAVLINK_WPM_STATE_IDLE && (_time_last_recv > 0)
-		   && hrt_elapsed_time(&_time_last_recv) > MAVLINK_MISSION_PROTOCOL_TIMEOUT_DEFAULT) {
-
-		_mavlink.send_statustext_critical("Operation timeout\t");
-		events::send(events::ID("mavlink_mission_op_timeout"), events::Log::Error,
-			     "Operation timeout, aborting transfer");
+		_mavlink.send_statustext_critical("Mission sync timeout\t");
+		events::send(events::ID("mavlink_mission_sync_timeout"), events::Log::Error,
+			     "Mission sync timeout, aborting transfer");
 
 		PX4_DEBUG("WPM: Last operation (state=%d) timed out, changing state to MAVLINK_WPM_STATE_IDLE", _state);
 
@@ -577,6 +571,21 @@ MavlinkMissionManager::send()
 
 		// since we are giving up, reset this state also, so another request can be started.
 		_transfer_in_progress = false;
+
+	} else if (_state == MAVLINK_WPM_STATE_GETLIST && (_time_last_sent > 0)
+		   && hrt_elapsed_time(&_time_last_sent) > MAVLINK_MISSION_RETRY_TIMEOUT_DEFAULT) {
+
+		// try to request item again after timeout
+		send_mission_request(_transfer_partner_sysid, _transfer_partner_compid, _transfer_seq);
+
+	} else if (_state == MAVLINK_WPM_STATE_SENDLIST && (_time_last_sent > 0)
+		   && hrt_elapsed_time(&_time_last_sent) > MAVLINK_MISSION_RETRY_TIMEOUT_DEFAULT
+		   && _transfer_seq == 0) {
+
+		// MISSION_COUNT may have been dropped
+		PX4_DEBUG("WPM: SENDLIST resending MISSION_COUNT (no MISSION_ACK received yet)");
+		send_mission_count(_transfer_partner_sysid, _transfer_partner_compid, _transfer_count, _mission_type,
+				   get_current_mission_type_crc());
 
 	} else if (_state == MAVLINK_WPM_STATE_IDLE) {
 		// reset flags
@@ -727,9 +736,9 @@ MavlinkMissionManager::handle_mission_request_list(const mavlink_message_t *msg)
 	mavlink_msg_mission_request_list_decode(msg, &wprl);
 
 	if (CHECK_SYSID_COMPID_MISSION(wprl)) {
-		const bool maybe_completed = (_transfer_seq == current_item_count());
+		const bool maybe_completed = (_state == MAVLINK_WPM_STATE_SENDLIST) && (_transfer_seq == current_item_count());
 
-		// If all mission items have been sent and a new mission request list comes in, we can proceed even if  MISSION_ACK was
+		// If all mission items have been sent and a new mission request list comes in, we can proceed even if MISSION_ACK was
 		// never received. This could happen on a quick reconnect that doesn't trigger MAVLINK_MISSION_PROTOCOL_TIMEOUT_DEFAULT
 		if (maybe_completed) {
 			switch_to_idle_state();
@@ -1538,6 +1547,12 @@ MavlinkMissionManager::parse_mavlink_mission_item(const mavlink_mission_item_t *
 			mission_item->params[0] = (uint16_t)mavlink_mission_item->param1;
 			break;
 
+		case MAV_CMD_DO_AUTOTUNE_ENABLE:
+			mission_item->nav_cmd = (NAV_CMD)mavlink_mission_item->command;
+			mission_item->params[0] = (uint16_t)mavlink_mission_item->param1;
+			mission_item->params[1] = (uint16_t)mavlink_mission_item->param2;
+			break;
+
 		default:
 			mission_item->nav_cmd = NAV_CMD_INVALID;
 			PX4_DEBUG("Unsupported command %d", mavlink_mission_item->command);
@@ -1627,6 +1642,7 @@ MavlinkMissionManager::parse_mavlink_mission_item(const mavlink_mission_item_t *
 		case MAV_CMD_CONDITION_DELAY:
 		case MAV_CMD_CONDITION_DISTANCE:
 		case MAV_CMD_DO_SET_ACTUATOR:
+		case MAV_CMD_DO_AUTOTUNE_ENABLE:
 		case MAV_CMD_COMPONENT_ARM_DISARM:
 			mission_item->nav_cmd = (NAV_CMD)mavlink_mission_item->command;
 			break;
