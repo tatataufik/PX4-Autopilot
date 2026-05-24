@@ -36,6 +36,8 @@ px4_add_module(
 	MAIN fw_tracking
 	SRCS
 		FwTracking.cpp
+	MODULE_CONFIG
+		fw_tracking_params.yaml
 	DEPENDS
 		px4_work_queue
 		PID

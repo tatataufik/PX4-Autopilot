@@ -1,0 +1,177 @@
+module_name: fw_tracking
+
+parameters:
+- group: FW Tracking
+  definitions:
+    TRK_MAX_DEG:
+      description:
+        short: Tracking maximum error angle
+        long: Normalised error +/-1 maps to this angle in degrees. Used to convert errorx/errory [-1,1] to radians before PID.
+      type: float
+      default: 30.0
+      unit: deg
+      min: 1.0
+      max: 90.0
+      decimal: 1
+    TRK_DBAND:
+      description:
+        short: Tracking error deadband
+        long: Errors smaller than this (in degrees) are treated as zero. Prevents hunting around the aim point.
+      type: float
+      default: 0.573
+      unit: deg
+      min: 0.0
+      max: 10.0
+      decimal: 3
+    TRK_SETTLE_S:
+      description:
+        short: Tracking settle ramp duration
+        long: Time in seconds over which PID authority ramps from 0 to 1 after mode entry. Prevents snapping to full authority on activation.
+      type: float
+      default: 2.0
+      unit: s
+      min: 0.0
+      max: 5.0
+      decimal: 1
+    TRK_PTCH_OFS:
+      description:
+        short: Tracking constant pitch bias
+        long: Added to the pitch setpoint at all times in TRACKING mode. Positive = nose-up bias.
+      type: float
+      default: 3.0
+      unit: deg
+      min: -30.0
+      max: 30.0
+      decimal: 1
+    TRK_TIMEOUT:
+      description:
+        short: Tracking signal loss timeout
+        long: If no TRACKING_MESSAGE is received for this many milliseconds the mode resets accumulated PID state.
+      type: int32
+      default: 1000
+      unit: ms
+      min: 100
+      max: 5000
+    TRK_CRUISE_THR:
+      description:
+        short: Tracking cruise throttle baseline
+        long: Throttle percentage used as the centre-point for the throttle PID. The throttle PID adds +/-delta around this value.
+      type: float
+      default: 50.0
+      unit: '%'
+      min: 10.0
+      max: 100.0
+      decimal: 1
+    TRK_TGT_LAT:
+      description:
+        short: Tracking target latitude
+        long: WGS-84 latitude of the ground target, decimal degrees. Used for horizontal distance and proximity alerts.
+      type: float
+      default: -6.8974
+      unit: deg
+      min: -90.0
+      max: 90.0
+      decimal: 7
+    TRK_TGT_LON:
+      description:
+        short: Tracking target longitude
+        long: WGS-84 longitude of the ground target, decimal degrees.
+      type: float
+      default: 107.5666
+      unit: deg
+      min: -180.0
+      max: 180.0
+      decimal: 7
+    TRK_TGT_ALT:
+      description:
+        short: Tracking target MSL altitude
+        long: MSL altitude of the target in metres. Used for altitude-relative telemetry reports.
+      type: float
+      default: 744.0
+      unit: m
+      min: -100.0
+      max: 5000.0
+      decimal: 1
+    TRK_CLOSE_M:
+      description:
+        short: Tracking proximity alert threshold
+        long: Horizontal distance (m) at which a GCS alert is issued when the drone enters or exits the close-to-target radius. Set to 0 to disable.
+      type: float
+      default: 1000.0
+      unit: m
+      min: 0.0
+      max: 50000.0
+      decimal: 0
+    TRK_ROLL_P:
+      description:
+        short: Tracking roll PID proportional gain
+      type: float
+      default: 5.0
+      min: 0.0
+      max: 10.0
+      decimal: 3
+    TRK_ROLL_I:
+      description:
+        short: Tracking roll PID integral gain
+      type: float
+      default: 0.1
+      min: 0.0
+      max: 5.0
+      decimal: 3
+    TRK_ROLL_D:
+      description:
+        short: Tracking roll PID derivative gain
+      type: float
+      default: 0.05
+      min: 0.0
+      max: 5.0
+      decimal: 3
+    TRK_PTCH_P:
+      description:
+        short: Tracking pitch PID proportional gain
+      type: float
+      default: 5.0
+      min: 0.0
+      max: 10.0
+      decimal: 3
+    TRK_PTCH_I:
+      description:
+        short: Tracking pitch PID integral gain
+      type: float
+      default: 0.1
+      min: 0.0
+      max: 5.0
+      decimal: 3
+    TRK_PTCH_D:
+      description:
+        short: Tracking pitch PID derivative gain
+      type: float
+      default: 0.05
+      min: 0.0
+      max: 5.0
+      decimal: 3
+    TRK_THRO_P:
+      description:
+        short: Tracking throttle PID proportional gain
+        long: Applied to pitch-attitude error (actual_pitch - nav_pitch_setpoint).
+      type: float
+      default: 10.0
+      min: 0.0
+      max: 50.0
+      decimal: 2
+    TRK_THRO_I:
+      description:
+        short: Tracking throttle PID integral gain
+      type: float
+      default: 0.5
+      min: 0.0
+      max: 10.0
+      decimal: 3
+    TRK_THRO_D:
+      description:
+        short: Tracking throttle PID derivative gain
+      type: float
+      default: 0.0
+      min: 0.0
+      max: 5.0
+      decimal: 3

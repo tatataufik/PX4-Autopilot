@@ -58,9 +58,11 @@
 
 using namespace time_literals;
 
-class FwTracking : public ModuleBase<FwTracking>, public ModuleParams
+class FwTracking : public ModuleBase, public ModuleParams
 {
 public:
+	static Descriptor desc;
+
 	FwTracking() : ModuleParams(nullptr) { reset_pids(); }
 
 	~FwTracking() override = default;
@@ -69,6 +71,7 @@ public:
 	static FwTracking *instantiate(int argc, char *argv[]);
 	static int custom_command(int argc, char *argv[]);
 	static int print_usage(const char *reason = nullptr);
+	static int run_trampoline(int argc, char *argv[]);
 
 	void run() override;
 
@@ -343,17 +346,24 @@ void FwTracking::run()
 	PX4_INFO("fw_tracking: exiting");
 }
 
+int FwTracking::run_trampoline(int argc, char *argv[])
+{
+	return ModuleBase::run_trampoline_impl(desc, [](int ac, char *av[]) -> ModuleBase * {
+		return FwTracking::instantiate(ac, av);
+	}, argc, argv);
+}
+
 int FwTracking::task_spawn(int argc, char *argv[])
 {
-	_task_id = px4_task_spawn_cmd("fw_tracking",
-				      SCHED_DEFAULT,
-				      SCHED_PRIORITY_DEFAULT,
-				      PX4_STACK_ADJUSTED(2000),
-				      (px4_main_t)&run_trampoline,
-				      (char *const *)argv);
+	desc.task_id = px4_task_spawn_cmd("fw_tracking",
+					  SCHED_DEFAULT,
+					  SCHED_PRIORITY_DEFAULT,
+					  PX4_STACK_ADJUSTED(2000),
+					  (px4_main_t)&run_trampoline,
+					  (char *const *)argv);
 
-	if (_task_id < 0) {
-		_task_id = -1;
+	if (desc.task_id < 0) {
+		desc.task_id = -1;
 		return -errno;
 	}
 
@@ -396,7 +406,9 @@ Features: GPS proximity alerts, 1 Hz status telemetry, configurable cruise throt
 	return 0;
 }
 
+ModuleBase::Descriptor FwTracking::desc{FwTracking::task_spawn, FwTracking::custom_command, FwTracking::print_usage};
+
 extern "C" __EXPORT int fw_tracking_main(int argc, char *argv[])
 {
-	return FwTracking::main(argc, argv);
+	return ModuleBase::main(FwTracking::desc, argc, argv);
 }
