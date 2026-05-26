@@ -65,6 +65,17 @@
 #include <uORB/topics/vehicle_angular_velocity.h>
 #include <uORB/topics/vehicle_global_position.h>
 #include <uORB/topics/vehicle_status.h>
+#include <uORB/topics/hover_thrust_estimate.h>
+#include <uORB/topics/vehicle_thrust_setpoint.h>
+
+// External-mode registration (lets PX4 commander show TRACKING as a first-class
+// flight mode, the same way ArduPlane exposes its TRACKING custom mode).
+#include <uORB/topics/register_ext_component_request.h>
+#include <uORB/topics/register_ext_component_reply.h>
+#include <uORB/topics/unregister_ext_component.h>
+#include <uORB/topics/arming_check_request.h>
+#include <uORB/topics/arming_check_reply.h>
+#include <uORB/topics/vehicle_control_mode.h>
 
 using namespace time_literals;
 
@@ -92,9 +103,30 @@ private:
 	uORB::Subscription _angular_vel_sub{ORB_ID(vehicle_angular_velocity)};
 	uORB::Subscription _vehicle_status_sub{ORB_ID(vehicle_status)};
 	uORB::Subscription _global_pos_sub{ORB_ID(vehicle_global_position)};
+	uORB::Subscription _hover_thrust_sub{ORB_ID(hover_thrust_estimate)};
+	uORB::Subscription _thrust_sp_sub{ORB_ID(vehicle_thrust_setpoint)};
 
 	/* ── publications ──────────────────────────────────────────── */
 	uORB::Publication<vehicle_attitude_setpoint_s> _att_sp_pub{ORB_ID(vehicle_attitude_setpoint)};
+
+	/* ── external-mode registration ────────────────────────────── */
+	uORB::Publication<register_ext_component_request_s> _register_request_pub{ORB_ID(register_ext_component_request)};
+	uORB::Publication<unregister_ext_component_s>       _unregister_pub      {ORB_ID(unregister_ext_component)};
+	uORB::Publication<arming_check_reply_s>             _arming_reply_pub    {ORB_ID(arming_check_reply)};
+	uORB::Publication<vehicle_control_mode_s>           _config_control_pub  {ORB_ID(config_control_setpoints)};
+	uORB::Subscription _register_reply_sub  {ORB_ID(register_ext_component_reply)};
+	uORB::Subscription _arming_request_sub  {ORB_ID(arming_check_request)};
+
+	bool   _sent_mode_registration{false};
+	uint8_t _mode_request_id{179};   // arbitrary tag (any uint8 value is fine)
+	int8_t _arming_check_id{-1};
+	int8_t _mode_id{-1};             // dynamically-assigned nav_state for TRACKING
+
+	void register_tracking_mode();
+	void unregister_tracking_mode();
+	void configure_tracking_mode();
+	void reply_to_arming_check(int8_t request_id);
+	void check_mode_registration();
 
 	/* ── PID controllers ───────────────────────────────────────── */
 	PID _pid_roll;
@@ -109,6 +141,13 @@ private:
 	hrt_abstime _last_telem_us{0};
 	bool        _was_active{false};
 	bool        _close_prev{false};
+
+	// Throttle baseline captured at the instant TRACKING becomes active.
+	// Read once from vehicle_thrust_setpoint.xyz[2] (the body-Z thrust the
+	// previous controller was commanding) so our publish doesn't introduce
+	// a step in throttle. Held constant for the duration of TRACKING; the
+	// throttle-PID then adds a small correction on top of this base.
+	float       _entry_thrust_base{0.5f};
 
 	/* ── parameters ────────────────────────────────────────────── */
 	DEFINE_PARAMETERS(
@@ -137,6 +176,102 @@ private:
 	void update_pid_gains();
 };
 
+/* ── External-mode registration helpers ──────────────────────────────────────
+ *
+ * Mirrors the pattern in mc_nn_control.cpp. At startup we publish a
+ * register_ext_component_request announcing this mode; the commander replies
+ * with a dynamically-assigned mode_id (the nav_state value the mode will
+ * appear as — normally NAVIGATION_STATE_EXTERNAL1 = 23 when we are first to
+ * register). After that we listen for arming_check_request and reply so the
+ * commander knows we are healthy enough to be selected.
+ */
+
+void Tracking::register_tracking_mode()
+{
+	register_ext_component_request_s req{};
+	req.timestamp = hrt_absolute_time();
+	// Name appears in QGC mode picker. Keep under sizeof(req.name)-1.
+	strncpy(req.name, "Tracking", sizeof(req.name) - 1);
+	req.request_id           = _mode_request_id;
+	req.px4_ros2_api_version = 1;
+	req.register_arming_check = true;
+	req.register_mode         = true;
+	_register_request_pub.publish(req);
+}
+
+void Tracking::unregister_tracking_mode()
+{
+	unregister_ext_component_s msg{};
+	msg.timestamp = hrt_absolute_time();
+	strncpy(msg.name, "Tracking", sizeof(msg.name) - 1);
+	msg.arming_check_id = _arming_check_id;
+	msg.mode_id         = _mode_id;
+	_unregister_pub.publish(msg);
+}
+
+void Tracking::configure_tracking_mode()
+{
+	// Declare which controllers we drive. We publish vehicle_attitude_setpoint
+	// (q_d quaternion + thrust_body), so the attitude and rate controllers must
+	// run to convert that into actuator commands — these were the critical
+	// missing flags. We bypass the position controller and altitude controller
+	// entirely (we drive thrust ourselves), and disable manual and offboard.
+	vehicle_control_mode_s cfg{};
+	cfg.timestamp = hrt_absolute_time();
+	cfg.source_id = _mode_id;
+	cfg.flag_multicopter_position_control_enabled = false;
+	cfg.flag_control_manual_enabled               = false;
+	cfg.flag_control_offboard_enabled             = false;
+	cfg.flag_control_position_enabled             = false;
+	cfg.flag_control_velocity_enabled             = false;
+	cfg.flag_control_altitude_enabled             = false;
+	cfg.flag_control_climb_rate_enabled           = false;
+	cfg.flag_control_acceleration_enabled         = false;
+	cfg.flag_control_attitude_enabled             = true;   // run mc_att_control
+	cfg.flag_control_rates_enabled                = true;   // run mc_rate_control
+	cfg.flag_control_allocation_enabled           = true;
+	cfg.flag_control_termination_enabled          = true;
+	_config_control_pub.publish(cfg);
+}
+
+void Tracking::reply_to_arming_check(int8_t request_id)
+{
+	arming_check_reply_s reply{};
+	reply.timestamp = hrt_absolute_time();
+	reply.request_id            = request_id;
+	reply.registration_id       = _arming_check_id;
+	reply.health_component_index = arming_check_reply_s::HEALTH_COMPONENT_INDEX_NONE;
+	reply.num_events            = 0;
+	reply.can_arm_and_run       = true;
+	// Sensor requirements for our control law:
+	reply.mode_req_angular_velocity = true;
+	reply.mode_req_attitude         = true;
+	reply.mode_req_local_position   = false;
+	reply.mode_req_local_alt        = true;
+	reply.mode_req_global_position  = true;  // we read vehicle_global_position
+	reply.mode_req_home_position    = false;
+	reply.mode_req_mission          = false;
+	reply.mode_req_prevent_arming   = false;
+	reply.mode_req_manual_control   = false;
+	_arming_reply_pub.publish(reply);
+}
+
+void Tracking::check_mode_registration()
+{
+	register_ext_component_reply_s reply{};
+	int tries = reply.ORB_QUEUE_LENGTH;
+	while (_register_reply_sub.update(&reply) && --tries >= 0) {
+		if (reply.request_id == _mode_request_id && reply.success) {
+			_arming_check_id = reply.arming_check_id;
+			_mode_id         = reply.mode_id;
+			PX4_INFO("tracking: registered  arming_check_id=%d  mode_id=%d (nav_state)",
+				 (int)_arming_check_id, (int)_mode_id);
+			configure_tracking_mode();
+			break;
+		}
+	}
+}
+
 void Tracking::reset_pids()
 {
 	_pid_roll.resetIntegral();
@@ -156,8 +291,8 @@ void Tracking::update_pid_gains()
 	_pid_roll.setIntegralLimit(math::radians(20.f));
 
 	_pid_pitch.setGains(_p_ptch_p.get(), _p_ptch_i.get(), _p_ptch_d.get());
-	_pid_pitch.setOutputLimit(math::radians(30.f));
-	_pid_pitch.setIntegralLimit(math::radians(15.f));
+	_pid_pitch.setOutputLimit(math::radians(45.f));   /* matched to roll; needs MPC_TILTMAX_AIR ≥ 45 */
+	_pid_pitch.setIntegralLimit(math::radians(20.f));
 
 	_pid_throttle.setGains(_p_thro_p.get(), _p_thro_i.get(), _p_thro_d.get());
 	_pid_throttle.setOutputLimit(50.f);              /* ±50 % throttle change */
@@ -173,12 +308,34 @@ void Tracking::run()
 
 		px4_usleep(5000);   /* 5 ms poll interval → 200 Hz */
 
+		/* Register the mode with commander on first tick, then wait for the
+		 * assigned mode_id before doing anything else. Without this, the
+		 * commander rejects mode switches to EXTERNAL1 with
+		 * "Mode is not registered". */
+		if (!_sent_mode_registration) {
+			register_tracking_mode();
+			_sent_mode_registration = true;
+			continue;
+		}
+		if (_mode_id < 0 || _arming_check_id < 0) {
+			check_mode_registration();
+			continue;
+		}
+
+		/* Reply to commander's arming check polls so we remain selectable. */
+		if (_arming_request_sub.updated()) {
+			arming_check_request_s req{};
+			_arming_request_sub.copy(&req);
+			reply_to_arming_check(req.request_id);
+		}
+
 		/* update vehicle status */
 		vehicle_status_s status{};
 		_vehicle_status_sub.copy(&status);
 
-		const bool active = (status.nav_state ==
-		                     vehicle_status_s::NAVIGATION_STATE_EXTERNAL1);
+		// _mode_id is the dynamically-assigned nav_state for our mode (= 23
+		// = NAVIGATION_STATE_EXTERNAL1 when we are the first external mode).
+		const bool active = (status.nav_state == _mode_id);
 
 		/* ── on mode entry ─────────────────────────────────── */
 		if (active && !_was_active) {
@@ -187,7 +344,28 @@ void Tracking::run()
 			_mode_entry_us = hrt_absolute_time();
 			_last_telem_us = 0;
 			_close_prev    = false;
-			PX4_INFO("tracking: TRACKING active");
+			// Capture the throttle the previous controller (mc_pos_control or
+			// fw equivalent) was commanding RIGHT NOW. This becomes our base
+			// for the duration of TRACKING — a snapshot, not a live track,
+			// since once we start publishing vehicle_attitude_setpoint the
+			// downstream thrust setpoint will reflect OUR commands.
+			vehicle_thrust_setpoint_s ts{};
+			if (_thrust_sp_sub.copy(&ts)) {
+				// xyz[2] is body-Z thrust (negative = up in FRD on copter).
+				const float magnitude = fabsf(ts.xyz[2]);
+				if (magnitude > 0.05f && magnitude < 1.0f) {
+					_entry_thrust_base = magnitude;
+				}
+			}
+			PX4_INFO("tracking: TRACKING active  base_thrust=%.0f%%",
+			         (double)(_entry_thrust_base * 100.f));
+			// Re-publish the control-mode config so its timestamp is fresh.
+			// Commander rejects config_control_setpoints older than 10 ms at
+			// the activation instant and silently falls back to default
+			// (controllers disabled) — the one-shot publish in
+			// check_mode_registration() happens at boot, so by the time the
+			// user actually switches to TRACKING it's far too stale.
+			configure_tracking_mode();
 		}
 
 		/* ── on mode exit ──────────────────────────────────── */
@@ -203,6 +381,15 @@ void Tracking::run()
 		}
 
 		const hrt_abstime now = hrt_absolute_time();
+
+		// Periodic re-publish of config_control_setpoints at ~1 Hz while
+		// active. Defensive against commander re-evaluating mode flags on
+		// transitions we may have missed (re-arm, brief failsafe trip, etc.)
+		static hrt_abstime last_cfg_refresh_us = 0;
+		if (now - last_cfg_refresh_us > 1_s) {
+			configure_tracking_mode();
+			last_cfg_refresh_us = now;
+		}
 
 		/* ── consume tracking_message ──────────────────────── */
 		tracking_message_s trk{};
@@ -292,8 +479,8 @@ void Tracking::run()
 		}
 
 		roll_sp_rad = math::constrain(roll_sp_rad,
-		                              -math::radians(45.f),
-		                               math::radians(45.f));
+		                              -math::radians(15.f),
+		                               math::radians(15.f));
 
 		/* ── pitch PID ──────────────────────────────────────── */
 		float pitch_sp_rad;
@@ -307,48 +494,55 @@ void Tracking::run()
 		}
 
 		pitch_sp_rad = math::constrain(pitch_sp_rad,
-		                               -math::radians(30.f),
-		                                math::radians(30.f));
+										-math::radians(15.f),
+										math::radians(15.f));
 
-		/* ── throttle PID ───────────────────────────────────── */
-		/* Mirrors satria: cruise ± pid_out, clamped to [3/4*cruise, 7/5*cruise].
-		 * Vehicle-type-aware error source:
-		 *   FIXED_WING : pitch_err (pitch-for-airspeed)
-		 *   ROTARY_WING: altitude_err vs TRK_TGT_ALT (throttle holds altitude) */
-		const bool is_copter = (status.vehicle_type == vehicle_status_s::VEHICLE_TYPE_ROTARY_WING);
-		const float cruise = _p_cruise_thr.get();
+		/* ── throttle: live hover baseline + pitch-error correction ──
+		 * Baseline: PX4 hover_thrust_estimate (zero-step on TRACKING entry).
+		 * Correction: thro_delta = P × (actual_pitch − pitch_sp_rad).
+		 *   actual < nav (we're below commanded pitch) → delta < 0 → LESS thrust
+		 *   actual > nav (we've overshot commanded pitch) → delta > 0 → MORE thrust
+		 * This is the satria-firmware/ArduPlane convention: when the vehicle
+		 * lags the commanded climb, reduce thrust; when it overshoots, push
+		 * back. For a multicopter doing horizontal chase via pitch tilting,
+		 * the same rule conserves altitude during the tilt manoeuvre.
+		 *
+		 * P and limits come from TRK_THRO_P (already a tunable param). Output
+		 * is in fraction; constrained to ±25% around the baseline so it
+		 * can't run away if pitch error stays large.
+		 */
+		// Baseline = throttle captured at mode-entry (snapshot of whatever
+		// the previous controller was outputting at that instant). Stays
+		// constant for the duration of TRACKING.
+		const float thrust_base = 0.12f;
 
-		float thro_input;
-
-		if (is_copter) {
-			/* +alt_err = below target → need more throttle. Feed −alt_err so
-			 * PID(setpoint=0, input=-alt_err) yields positive delta. */
-			const float alt_err_m = has_gps ? (_p_tgt_alt.get() - gpos.alt) : 0.f;
-			thro_input = -alt_err_m;
-		} else {
-			thro_input = actual_pitch_rad - pitch_sp_rad;
-		}
-
+		const float pitch_err = actual_pitch_rad - pitch_sp_rad;
 		_pid_throttle.setSetpoint(0.f);
-		const float thro_delta  = _pid_throttle.update(-thro_input, dt) * ramp;
-		const float throttle_sp = math::constrain(cruise + thro_delta,
-		                                           cruise * 0.75f,
-		                                           cruise * 1.4f);
+		// PID error = 0 − feedback = −pitch_err. Feed −pitch_err so the
+		// sign matches: positive error ⇒ negative delta when actual < nav.
+		// (TRK_THRO_P operates on this internally.) Convert percent → fraction.
+		const float thro_delta_pct = _pid_throttle.update(-pitch_err, dt) * ramp;
+		const float thrust_correction = thro_delta_pct * 0.01f;
+
+		float thrust_norm = thrust_base + thrust_correction;
+		thrust_norm = math::constrain(thrust_norm,
+		                              thrust_base * 0.75f,
+		                              thrust_base * 1.25f);
 
 		/* ── publish attitude setpoint ──────────────────────── */
-		/* PX4 v1 VehicleAttitudeSetpoint uses q_d quaternion + thrust_body.
-		 *   FIXED_WING : thrust_body[0] = throttle [0,1]  (forward body axis)
-		 *   ROTARY_WING: thrust_body[2] = −throttle [0,1] (NED, negative = up) */
 		vehicle_attitude_setpoint_s att_sp{};
 		att_sp.timestamp = now;
 
 		const matrix::Quatf q_sp(matrix::Eulerf(roll_sp_rad, pitch_sp_rad, euler.psi()));
 		q_sp.copyTo(att_sp.q_d);
 
-		const float thrust_norm = throttle_sp * 0.01f;
-		att_sp.thrust_body[0] = is_copter ? 0.f : thrust_norm;
+		// FRD body frame: copter thrust on −Z (down-axis NED inverted).
+		// Plane thrust on +X kept as a fallback so the same publish path
+		// works for both vehicle types if the user later re-enables the
+		// is_copter switch.
+		att_sp.thrust_body[0] = 0.f;
 		att_sp.thrust_body[1] = 0.f;
-		att_sp.thrust_body[2] = is_copter ? -thrust_norm : 0.f;
+		att_sp.thrust_body[2] = -thrust_norm;
 
 		_att_sp_pub.publish(att_sp);
 
@@ -357,18 +551,23 @@ void Tracking::run()
 			_last_telem_us = now;
 
 			if (has_gps) {
-				PX4_INFO("TRK d=%.0fm alt=%.0fm ex=%.2f ey=%.2f",
+				PX4_INFO("TRK d=%.0fm alt=%.0fm ex=%.2f ey=%.2f navx=%.1f navy=%.1f thr=%.0f%%",
 				         (double)horiz_dist_m, (double)alt_rel_m,
-				         (double)math::degrees(ex), (double)math::degrees(ey));
+				         (double)math::degrees(ex), (double)math::degrees(ey),
+				         (double)math::degrees(roll_sp_rad), (double)math::degrees(pitch_sp_rad),
+				         (double)(thrust_norm * 100.0f));
 			}
 
-			PX4_INFO("TRK[%s] p_ahrs=%.1f nav=%.1f thr=%.1f%% ramp=%.2f",
-			         is_copter ? "MC" : "FW",
-			         (double)math::degrees(actual_pitch_rad),
-			         (double)math::degrees(pitch_sp_rad),
-			         (double)throttle_sp,
-			         (double)ramp);
+			// PX4_INFO("TRK p_ahrs=%.1f nav=%.1f thr=%.1f%% ramp=%.2f",
+			//          (double)math::degrees(actual_pitch_rad),
+			//          (double)math::degrees(pitch_sp_rad),
+			//          (double)throttle_sp,
+			//          (double)ramp);
 		}
+	}
+
+	if (_sent_mode_registration && _mode_id >= 0) {
+		unregister_tracking_mode();
 	}
 
 	PX4_INFO("tracking: exiting");

@@ -232,7 +232,12 @@ private:
 	// window and restart accumulation. Prevents the failure where SITL is
 	// restarted while a previous crash still tumbles the airframe and the
 	// "bias" absorbs the actual rotation.
-	static constexpr int   GYRO_BIAS_SAMPLES       = 200;     // ~2.5 s at 80 Hz RREF
+	// 500 samples ≈ 6.25 s at 80 Hz. 200 samples (2.5 s) sometimes locked on a
+	// momentary lull when stationary X-Plane gyro oscillates around its true
+	// bias — observed e.g. Z=−0.000 lock followed by visible heading drift.
+	// Longer window averages over more oscillation cycles → mean tracks the
+	// real bias.
+	static constexpr int   GYRO_BIAS_SAMPLES       = 500;     // ~6.25 s at 80 Hz RREF
 	static constexpr float GYRO_BIAS_STDDEV_LIMIT  = 0.05f;   // rad/s ≈ 2.9°/s
 	float _gyro_bias_x{0.f},     _gyro_bias_y{0.f},     _gyro_bias_z{0.f};
 	float _gyro_bias_sum_x{0.f}, _gyro_bias_sum_y{0.f}, _gyro_bias_sum_z{0.f};

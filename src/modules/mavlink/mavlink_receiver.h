@@ -119,7 +119,10 @@
 #include <uORB/topics/tracking_message.h>
 #include <uORB/topics/aux_global_position.h>
 #include <uORB/topics/ranging_beacon.h>
-#include "mavlink_msg_tracking_message.h"
+// TRACKING_MESSAGE (id 11045) is now in common.xml — the dialect header is
+// generated into build/.../mavlink/common/mavlink_msg_tracking_message.h and
+// pulled in transitively via mavlink_bridge_header.h. The custom local copy
+// has been removed to avoid duplicate struct definitions.
 
 #if !defined(CONSTRAINED_FLASH)
 # include <uORB/topics/debug_array.h>

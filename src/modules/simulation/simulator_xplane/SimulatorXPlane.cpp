@@ -37,6 +37,7 @@
 #include <px4_platform_common/tasks.h>
 #include <px4_platform_common/time.h>
 #include <lib/mathlib/mathlib.h>
+#include <lib/geo/geo.h>                          // CONSTANTS_ONE_G
 #include <lib/world_magnetic_model/geo_mag_declination.h>
 #include <drivers/device/Device.hpp>
 #include <lib/drivers/device/Device.hpp>
@@ -743,21 +744,51 @@ void SimulatorXPlane::publish_imu(hrt_abstime t)
 	const float gyro_n  = 0.01f;     // rad/s RMS (~0.57°/s, BMI088 datasheet)
 	const float accel_n = 0.1f;      // m/s² RMS (SIH reference)
 
+	// Pre-arm IMU gate — same trick as satria-firmware's SIM_XPlane.
+	// Before arming, EKF2 / hover_thrust_estimator / mc_pos_control all need
+	// to settle their bias estimates. X-Plane's raw IMU stream has 0.2-1.0
+	// m/s² and °/s jitter (much higher than real MEMS), which makes the
+	// bias estimators chase ghosts during boot — sometimes for tens of
+	// seconds. Freezing the IMU at the stationary baseline (gyro=0,
+	// accel=(0,0,-g)) while disarmed lets every estimator converge
+	// instantly, mimicking a vehicle on a perfectly stable test rig. The
+	// moment we arm, the bridge's filtered/calibrated stream flows live
+	// for use by the EKF + rate controller.
+	_vehicle_status_sub.update(&_vehicle_status);
+	const bool armed = (_vehicle_status.arming_state ==
+	                    vehicle_status_s::ARMING_STATE_ARMED);
+
+	float accel_x = _accel_filt_x * _accel_scale_factor;
+	float accel_y = _accel_filt_y * _accel_scale_factor;
+	float accel_z = _accel_filt_z * _accel_scale_factor;
+	float gyro_x  = _gyro_filt_x - _gyro_bias_x;
+	float gyro_y  = _gyro_filt_y - _gyro_bias_y;
+	float gyro_z  = _gyro_filt_z - _gyro_bias_z;
+
+	if (!armed) {
+		accel_x = 0.0f;
+		accel_y = 0.0f;
+		accel_z = -CONSTANTS_ONE_G;   // stationary specific force (FRD body)
+		gyro_x  = 0.0f;
+		gyro_y  = 0.0f;
+		gyro_z  = 0.0f;
+	}
+
 	// Publish FILTERED accel with magnitude scaling. The IIR low-pass kills
 	// X-Plane physics jitter before noise injection; scaling normalises |a|
 	// to ≈1 g (no-op until calibration completes).
 	_px4_accel.set_temperature(20.0f);
 	_px4_accel.update(t,
-		_accel_filt_x * _accel_scale_factor + xplane_wgn() * accel_n,
-		_accel_filt_y * _accel_scale_factor + xplane_wgn() * accel_n,
-		_accel_filt_z * _accel_scale_factor + xplane_wgn() * accel_n);
+		accel_x + xplane_wgn() * accel_n,
+		accel_y + xplane_wgn() * accel_n,
+		accel_z + xplane_wgn() * accel_n);
 
 	// Publish FILTERED gyro with bias subtracted (no-op pre-calibration).
 	_px4_gyro.set_temperature(20.0f);
 	_px4_gyro.update(t,
-		(_gyro_filt_x - _gyro_bias_x) + xplane_wgn() * gyro_n,
-		(_gyro_filt_y - _gyro_bias_y) + xplane_wgn() * gyro_n,
-		(_gyro_filt_z - _gyro_bias_z) + xplane_wgn() * gyro_n);
+		gyro_x + xplane_wgn() * gyro_n,
+		gyro_y + xplane_wgn() * gyro_n,
+		gyro_z + xplane_wgn() * gyro_n);
 }
 
 void SimulatorXPlane::update_mag_earth()
