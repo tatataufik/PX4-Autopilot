@@ -265,8 +265,27 @@ void Tracking::check_mode_registration()
 		if (reply.request_id == _mode_request_id && reply.success) {
 			_arming_check_id = reply.arming_check_id;
 			_mode_id         = reply.mode_id;
-			PX4_INFO("tracking: registered  arming_check_id=%d  mode_id=%d (nav_state)",
-				 (int)_arming_check_id, (int)_mode_id);
+
+			/* Translate the assigned nav_state into the (main, sub) tuple
+			 * a GCS / companion needs to send via MAV_CMD_DO_SET_MODE to
+			 * activate this mode. External-mode nav_states 23..30 map to
+			 * AUTO sub-modes EXTERNAL1..EXTERNAL8 (= 11..18). Print this
+			 * explicitly so drone-seeker / QGC don't have to guess the
+			 * slot — relevant since Guided Course (upstream) also
+			 * registers as an external mode and may take slot 1. */
+			const int external_idx = (int)_mode_id - 23;  /* 0..7 */
+			const int main_mode    = 4;                   /* PX4_CUSTOM_MAIN_MODE_AUTO */
+			const int sub_mode     = (external_idx >= 0 && external_idx < 8)
+			                         ? (11 + external_idx)
+			                         : -1;
+			const uint32_t custom_mode = (sub_mode > 0)
+			                             ? (((uint32_t)sub_mode) << 24) | (((uint32_t)main_mode) << 16)
+			                             : 0u;
+
+			PX4_INFO("tracking: registered  arming_check_id=%d  mode_id=%d (nav_state)  "
+				 "→ DO_SET_MODE main=%d sub=%d  custom_mode=0x%08x",
+				 (int)_arming_check_id, (int)_mode_id,
+				 main_mode, sub_mode, (unsigned)custom_mode);
 			configure_tracking_mode();
 			break;
 		}
@@ -381,6 +400,33 @@ void Tracking::run()
 			continue;
 		}
 
+		/* ── 1-Hz receive diagnostic (TRACKING-active only) ───────────
+		 * Detect new tracking_message arrivals using updated() and
+		 * print a per-second summary. updated() is peek-only — the
+		 * actual consume happens in the copy() inside the PID block
+		 * below; calling update() here would steal the message.
+		 */
+		{
+			static hrt_abstime diag_last_us = 0;
+			static uint32_t    diag_count   = 0;
+			tracking_message_s diag_trk{};
+
+			if (_tracking_msg_sub.updated()) {
+				diag_count++;
+				_tracking_msg_sub.copy(&diag_trk);   /* non-consuming peek */
+			}
+
+			const hrt_abstime now_diag = hrt_absolute_time();
+
+			if (now_diag - diag_last_us >= 1_s) {
+				PX4_INFO("TRK rx: %u msg/s  last_ex=%+.3f last_ey=%+.3f",
+					 (unsigned)diag_count,
+					 (double)diag_trk.errorx, (double)diag_trk.errory);
+				diag_last_us = now_diag;
+				diag_count = 0;
+			}
+		}
+
 		const hrt_abstime now = hrt_absolute_time();
 
 		// Periodic re-publish of config_control_setpoints at ~1 Hz while
@@ -404,6 +450,14 @@ void Tracking::run()
 		 * step PID when copy() returns true (= new msg), and compute
 		 * dt from the wall-clock interval between messages.
 		 */
+		/* Diagnostic state — rate-limited message-rx log + one-shot
+		 * timeout-edge log. Both kept across loop iterations so we
+		 * can see *whether* seeker packets arrive at all, even when
+		 * the PID block below short-circuits on stale data. */
+		static hrt_abstime last_rx_log_us = 0;
+		static uint32_t    rx_count_since_log = 0;
+		static bool        timeout_logged = false;
+
 		tracking_message_s trk{};
 		const bool new_msg = _tracking_msg_sub.copy(&trk);
 
@@ -412,6 +466,18 @@ void Tracking::run()
 			_errorx_rad = trk.errorx * max_rad;
 			_errory_rad = trk.errory * max_rad;
 			_last_msg_us = now;
+			timeout_logged = false;   /* re-arm the timeout one-shot */
+
+			rx_count_since_log++;
+
+			if (now - last_rx_log_us >= 1_s) {
+				PX4_INFO("TRK rx: errorx=%+.3f errory=%+.3f  (%u msgs in last %.1fs)",
+					 (double)trk.errorx, (double)trk.errory,
+					 (unsigned)rx_count_since_log,
+					 (double)((now - last_rx_log_us) * 1e-6f));
+				last_rx_log_us = now;
+				rx_count_since_log = 0;
+			}
 		}
 
 		/* timeout: reset PID integrals if no message received */
@@ -421,6 +487,12 @@ void Tracking::run()
 			_pid_throttle.resetIntegral();
 			_errorx_rad = 0.f;
 			_errory_rad = 0.f;
+
+			if (!timeout_logged) {
+				PX4_WARN("TRK no message for %.1f s — PIDs reset, waiting for seeker",
+					 (double)((now - _last_msg_us) * 1e-6f));
+				timeout_logged = true;
+			}
 		}
 
 		/* Skip PID + publish until a fresh msg arrives. The MC

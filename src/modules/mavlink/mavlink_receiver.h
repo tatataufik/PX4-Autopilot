@@ -227,7 +227,9 @@ private:
 	void handle_message_set_position_target_global_int(mavlink_message_t *msg);
 	void handle_message_set_position_target_local_ned(mavlink_message_t *msg);
 	void handle_message_statustext(mavlink_message_t *msg);
+#if defined(MAVLINK_MSG_ID_TRACKING_MESSAGE)
 	void handle_message_tracking_message(mavlink_message_t *msg);
+#endif
 	void handle_message_tunnel(mavlink_message_t *msg);
 	void handle_message_utm_global_position(mavlink_message_t *msg);
 #if defined(MAVLINK_MSG_ID_SET_VELOCITY_LIMITS) // For now only defined if development.xml is used
@@ -409,7 +411,9 @@ private:
 	uORB::PublicationMulti<sensor_optical_flow_s>           _sensor_optical_flow_pub{ORB_ID(sensor_optical_flow)};
 	gnss::GpsRtcmMessageAssembler				_gps_rtcm_message_assembler {};
 
+#if defined(MAVLINK_MSG_ID_TRACKING_MESSAGE)
 	uORB::Publication<tracking_message_s>		_tracking_message_pub{ORB_ID(tracking_message)};
+#endif
 
 	// ORB publications (queue length > 1)
 	uORB::Publication<transponder_report_s>  _transponder_report_pub{ORB_ID(transponder_report)};
