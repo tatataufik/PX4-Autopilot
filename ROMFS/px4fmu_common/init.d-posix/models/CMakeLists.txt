@@ -1,7 +1,6 @@
 px4_add_romfs_files(
 	xplane_quad.json
 	xplane_quad.params
-<<<<<<< HEAD
 	xplane_cessna172.json
 	xplane_cessna172.params
 	xplane_vtail.json
@@ -14,6 +13,4 @@ px4_add_romfs_files(
 	xplane_alia250.params
 	xplane_qtailsitter.json
 	xplane_qtailsitter.params
-=======
->>>>>>> xplane-sim
 )

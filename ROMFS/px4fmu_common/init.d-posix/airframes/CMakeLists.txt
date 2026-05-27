@@ -89,7 +89,6 @@ px4_add_romfs_files(
 	4020_gz_tiltrotor
 	4021_gz_x500_flow
 
-<<<<<<< HEAD
 	5001_xplane_cessna172
 	5002_xplane_tb2
 	5003_xplane_vtail
@@ -97,9 +96,6 @@ px4_add_romfs_files(
 	5011_xplane_quad
 	5020_xplane_alia250
 	5021_xplane_qtailsitter
-=======
-	5011_xplane_quad
->>>>>>> xplane-sim
 
 	6011_gazebo-classic_typhoon_h480
 	6011_gazebo-classic_typhoon_h480.post
