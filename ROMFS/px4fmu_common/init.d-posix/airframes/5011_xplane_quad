@@ -214,9 +214,16 @@ param set-default MPC_XY_TRAJ_P 0.5
 param set-default MPC_ACC_HOR 10.0
 # Speed-up tuning (2026-05-24): jerk 3.0→5.0 + ACC_HOR_MAX 5→8 to support
 # faster acceleration / braking at the new MPC_XY_VEL_MAX=25 m/s.
-param set-default MPC_JERK_AUTO 5.0
+# Re-bumped 2026-05-27: 5.0 → 12.0 because waypoint-to-waypoint transitions
+# felt sluggish on first forward. The vehicle near-stops at each WP, then
+# rebuilds accel at jerk rate; at 5 m/s³ the 0→ACC_HOR ramp takes ~2 s,
+# perceived as a 2-second "dead band" before the drone moves. 12 m/s³
+# rebuilds accel in ~0.8 s — visibly snappy without losing trajectory
+# smoothness. MPC_JERK_MAX raised in lockstep so the planner ceiling
+# doesn't clamp the new MPC_JERK_AUTO.
+param set-default MPC_JERK_AUTO 12.0
 param set-default MPC_ACC_HOR_MAX 14.0
-param set-default MPC_JERK_MAX 6.0
+param set-default MPC_JERK_MAX 15.0
 param set-default MPC_XY_ERR_MAX 2
 
 

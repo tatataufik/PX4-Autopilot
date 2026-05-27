@@ -169,7 +169,8 @@ private:
 		(ParamFloat<px4::params::TRK_PTCH_D>)     _p_ptch_d,
 		(ParamFloat<px4::params::TRK_THRO_P>)     _p_thro_p,
 		(ParamFloat<px4::params::TRK_THRO_I>)     _p_thro_i,
-		(ParamFloat<px4::params::TRK_THRO_D>)     _p_thro_d
+		(ParamFloat<px4::params::TRK_THRO_D>)     _p_thro_d,
+		(ParamFloat<px4::params::MPC_TILTMAX_AIR>) _p_tilt_max
 	)
 
 	void reset_pids();
@@ -391,9 +392,22 @@ void Tracking::run()
 			last_cfg_refresh_us = now;
 		}
 
-		/* ── consume tracking_message ──────────────────────── */
+		/* ── consume tracking_message ────────────────────────────────
+		 * Gate the PID + setpoint publish on new-message arrivals.
+		 * The poll loop runs at 200 Hz (5 ms) but drone-seeker only
+		 * pushes TRACKING_MESSAGE at the camera frame rate (~30 Hz).
+		 * If we ran the PID every 5 ms with hardcoded dt=0.005, the
+		 * I-term would integrate the SAME stale error 6× per real
+		 * sample → throttle drift, roll oscillation, D-term spikes.
+		 *
+		 * Match the controller rate to the actual data rate: only
+		 * step PID when copy() returns true (= new msg), and compute
+		 * dt from the wall-clock interval between messages.
+		 */
 		tracking_message_s trk{};
-		if (_tracking_msg_sub.copy(&trk)) {
+		const bool new_msg = _tracking_msg_sub.copy(&trk);
+
+		if (new_msg) {
 			const float max_rad = math::radians(_p_max_deg.get());
 			_errorx_rad = trk.errorx * max_rad;
 			_errory_rad = trk.errory * max_rad;
@@ -407,6 +421,15 @@ void Tracking::run()
 			_pid_throttle.resetIntegral();
 			_errorx_rad = 0.f;
 			_errory_rad = 0.f;
+		}
+
+		/* Skip PID + publish until a fresh msg arrives. The MC
+		 * attitude controller will hold the last published att_sp,
+		 * which is the correct behaviour (no fresh tracking info
+		 * → no fresh setpoint).
+		 */
+		if (!new_msg) {
+			continue;
 		}
 
 		/* ── get vehicle attitude ───────────────────────────── */
@@ -451,12 +474,17 @@ void Tracking::run()
 			}
 		}
 
-		/* ── deadband & pitch offset ────────────────────────── */
-		const float deadband_rad  = math::radians(_p_dband.get());
-		const float pitch_ofs_rad = math::radians(_p_pitch_ofs.get());
-
+		/* ── deadband (satria ArduCopter convention) ─────────────────
+		 * Both ex and ey go to 0 when below deadband — no constant
+		 * pitch-offset fallback. The fixed-wing -pitch_ofs_rad trick
+		 * makes a copter drift forward forever when the target is
+		 * centred; satria's ArduCopter mode_tracking deliberately
+		 * leaves ey=0 below deadband. TRK_PTCH_OFS is preserved as
+		 * a param for an eventual fixed-wing split.
+		 */
+		const float deadband_rad = math::radians(_p_dband.get());
 		const float ex = (fabsf(_errorx_rad) > deadband_rad) ? _errorx_rad : 0.f;
-		const float ey = (fabsf(_errory_rad) > deadband_rad) ? _errory_rad : -pitch_ofs_rad;
+		const float ey = (fabsf(_errory_rad) > deadband_rad) ? _errory_rad : 0.f;
 
 		/* ── settle ramp ────────────────────────────────────── */
 		const float settle_s = _p_settle_s.get();
@@ -464,7 +492,24 @@ void Tracking::run()
 		const float ramp     = (settle_s > 0.f) ?
 		                       math::constrain(elapsed / settle_s, 0.f, 1.f) : 1.f;
 
-		const float dt = 0.005f;   /* fixed 5 ms — matches poll interval */
+		/* dt = wall-clock interval since the previous tracking_message.
+		 * We only reach this point on a new-msg arrival, so this is
+		 * the actual sample period of the seeker's pipeline (~33 ms
+		 * at 30 Hz camera). Clamp to [5 ms, 200 ms] to keep PID
+		 * stable across frame-drop spikes.
+		 */
+		static hrt_abstime last_pid_us = 0;
+		const float dt = (last_pid_us == 0) ? 0.033f :
+		                 math::constrain((now - last_pid_us) * 1e-6f, 0.005f, 0.2f);
+		last_pid_us = now;
+
+		/* ── lean limit from MPC_TILTMAX_AIR (degrees) ───────────────
+		 * Replaces the hardcoded ±15°. With max_deg=30, a saturated
+		 * errorx=±1 maps to ±30° PID input, which a 15° output limit
+		 * can't track. Use the airframe's actual tilt ceiling so the
+		 * controller can command the bank angle satria does.
+		 */
+		const float lean_max_rad = math::radians(_p_tilt_max.get());
 
 		/* ── roll PID ───────────────────────────────────────── */
 		float roll_sp_rad;
@@ -473,61 +518,51 @@ void Tracking::run()
 			_pid_roll.resetIntegral();
 			/* active damping: oppose roll rate to hold wings level */
 			roll_sp_rad = -roll_rate_radps * 0.1f * ramp;
+
 		} else {
 			_pid_roll.setSetpoint(0.f);
 			roll_sp_rad = _pid_roll.update(-ex, dt) * ramp;
 		}
 
-		roll_sp_rad = math::constrain(roll_sp_rad,
-		                              -math::radians(15.f),
-		                               math::radians(15.f));
+		roll_sp_rad = math::constrain(roll_sp_rad, -lean_max_rad, lean_max_rad);
 
-		/* ── pitch PID ──────────────────────────────────────── */
-		float pitch_sp_rad;
+		/* ── pitch / throttle split (satria ArduCopter style) ─────────
+		 * Baseline = TRK_CRUISE_THR (configurable, fraction in [0,1]).
+		 * Replaces the HTE-snapshot baseline which depended on a
+		 * possibly-unconverged hover-thrust estimate at mode-entry.
+		 *
+		 * Vertical error handling:
+		 *   ey > 0  (target above) → nose UP via pitch PID.
+		 *                            PX4 convention: positive pitch_sp
+		 *                            = nose up. PID input −ey gives
+		 *                            PID error +ey, so output > 0 when
+		 *                            target above → correct sign.
+		 *   ey < 0  (target below) → REDUCE THROTTLE, hold pitch level.
+		 *                            Pitching down on a copter sends
+		 *                            it forward (wrong); reducing
+		 *                            thrust sends it down (right).
+		 */
+		const float cruise_thr = math::constrain(_p_cruise_thr.get() * 0.01f, 0.f, 1.f);
+		float thrust_norm = cruise_thr * ramp;
+		float pitch_sp_rad = 0.f;
 
 		if (fabsf(ey) < 1e-6f) {
 			_pid_pitch.resetIntegral();
-			pitch_sp_rad = 0.f;
+
 		} else {
 			_pid_pitch.setSetpoint(0.f);
-			pitch_sp_rad = _pid_pitch.update(-ey, dt) * ramp;
+			const float pid_out = _pid_pitch.update(-ey, dt) * ramp;
+
+			if (ey > 0.f) {
+				/* target above → pitch up */
+				pitch_sp_rad = math::constrain(pid_out, -lean_max_rad, lean_max_rad);
+
+			} else {
+				/* target below → reduce throttle, keep pitch level */
+				const float thro_delta = pid_out / lean_max_rad;
+				thrust_norm = math::constrain(thrust_norm + thro_delta, 0.f, 1.f);
+			}
 		}
-
-		pitch_sp_rad = math::constrain(pitch_sp_rad,
-										-math::radians(15.f),
-										math::radians(15.f));
-
-		/* ── throttle: live hover baseline + pitch-error correction ──
-		 * Baseline: PX4 hover_thrust_estimate (zero-step on TRACKING entry).
-		 * Correction: thro_delta = P × (actual_pitch − pitch_sp_rad).
-		 *   actual < nav (we're below commanded pitch) → delta < 0 → LESS thrust
-		 *   actual > nav (we've overshot commanded pitch) → delta > 0 → MORE thrust
-		 * This is the satria-firmware/ArduPlane convention: when the vehicle
-		 * lags the commanded climb, reduce thrust; when it overshoots, push
-		 * back. For a multicopter doing horizontal chase via pitch tilting,
-		 * the same rule conserves altitude during the tilt manoeuvre.
-		 *
-		 * P and limits come from TRK_THRO_P (already a tunable param). Output
-		 * is in fraction; constrained to ±25% around the baseline so it
-		 * can't run away if pitch error stays large.
-		 */
-		// Baseline = throttle captured at mode-entry (snapshot of whatever
-		// the previous controller was outputting at that instant). Stays
-		// constant for the duration of TRACKING.
-		const float thrust_base = 0.12f;
-
-		const float pitch_err = actual_pitch_rad - pitch_sp_rad;
-		_pid_throttle.setSetpoint(0.f);
-		// PID error = 0 − feedback = −pitch_err. Feed −pitch_err so the
-		// sign matches: positive error ⇒ negative delta when actual < nav.
-		// (TRK_THRO_P operates on this internally.) Convert percent → fraction.
-		const float thro_delta_pct = _pid_throttle.update(-pitch_err, dt) * ramp;
-		const float thrust_correction = thro_delta_pct * 0.01f;
-
-		float thrust_norm = thrust_base + thrust_correction;
-		thrust_norm = math::constrain(thrust_norm,
-		                              thrust_base * 0.75f,
-		                              thrust_base * 1.25f);
 
 		/* ── publish attitude setpoint ──────────────────────── */
 		vehicle_attitude_setpoint_s att_sp{};
@@ -558,11 +593,11 @@ void Tracking::run()
 				         (double)(thrust_norm * 100.0f));
 			}
 
-			// PX4_INFO("TRK p_ahrs=%.1f nav=%.1f thr=%.1f%% ramp=%.2f",
-			//          (double)math::degrees(actual_pitch_rad),
-			//          (double)math::degrees(pitch_sp_rad),
-			//          (double)throttle_sp,
-			//          (double)ramp);
+			PX4_INFO("TRK p_ahrs=%.1f nav=%.1f thr=%.1f%% ramp=%.2f",
+			         (double)math::degrees(actual_pitch_rad),
+			          (double)math::degrees(pitch_sp_rad),
+			          (double)thrust_norm * 100.0f,
+			         (double)ramp);
 		}
 	}
 
