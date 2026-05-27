@@ -1,0 +1,128 @@
+#!/bin/sh
+################################################################################
+# PX4 SITL Configuration for Generic V-Tail Fixed-Wing in X-Plane
+################################################################################
+#
+# @name              X-Plane V-Tail Fixed-Wing
+# @type              Plane V-Tail
+# @class             Plane
+# @maintainer        px4xplane project
+#
+# Aircraft:          Generic V-tail (e.g. X-Plane's stock V-tail trainer)
+# Compatible Sim:    X-Plane 11/12
+#
+# PX4 actuator_outputs channel layout (0-indexed):
+#   channel 0 → Aileron (single channel, mirrored in JSON map)
+#   channel 1 → V-tail right ruddervator (elevator−rudder, pre-mixed)
+#   channel 2 → Motor (throttle)
+#   channel 3 → V-tail left  ruddervator (elevator+rudder, pre-mixed)
+#
+# Control allocator surface types (CA_SV_CSn_TYPE):
+#   1  = left aileron        13 = left A-tail / V-tail
+#   2  = right aileron       14 = right A-tail / V-tail
+#
+# The JSON map (models/xplane_vtail.json) drives the X-Plane DREFs:
+#   aileron (CH0)            → wing1r_ail1def + wing1l_ail1def (inverted)
+#   right ruddervator (CH1)  → vstab1_rud1def
+#   throttle (CH2)           → ENGN_thro_use[0]
+#   left  ruddervator (CH3)  → vstab2_rud1def
+#
+################################################################################
+
+. ${R}etc/init.d/rc.fw_defaults
+
+
+################################################################################
+# CONTROL ALLOCATION — single motor + aileron + V-tail
+################################################################################
+
+# Plane airframe (multicopter-style mixer disabled)
+param set-default CA_AIRFRAME 1
+
+# One pusher motor on the body X axis (centred behind the wing)
+param set-default CA_ROTOR_COUNT 1
+param set-default CA_ROTOR0_PX 0.3
+
+# Four control surfaces: aileron + ruddervator-left + ruddervator-right
+# (the single aileron channel is mirrored in the JSON map; not a second servo)
+param set-default CA_SV_CS_COUNT 3
+
+# CH0 — aileron (single channel, JSON map mirrors to both wings)
+param set-default CA_SV_CS0_TYPE  2          # right aileron family
+param set-default CA_SV_CS0_TRQ_R 1.0
+
+# CH1 — V-tail RIGHT ruddervator: elevator + (−rudder)
+param set-default CA_SV_CS1_TYPE  14         # right A/V-tail
+param set-default CA_SV_CS1_TRQ_P 0.5
+param set-default CA_SV_CS1_TRQ_Y 0.5
+
+# CH3 — V-tail LEFT ruddervator: elevator + rudder
+# Note: PWM_MAIN_FUNC mapping below puts left v-tail on output channel 3,
+# control-allocator index 2 → output index 3 via PWM_MAIN_FUNC4.
+param set-default CA_SV_CS2_TYPE  13         # left A/V-tail
+param set-default CA_SV_CS2_TRQ_P 0.5
+param set-default CA_SV_CS2_TRQ_Y -0.5
+
+
+################################################################################
+# PWM OUTPUT MAPPING
+################################################################################
+# 201 = aileron, 202 = elevator, 203 = rudder, 204 = throttle, 205 = flaps,
+# 211 = v-tail left, 212 = v-tail right. The control allocator emits the
+# pre-mixed ruddervator on the v-tail outputs.
+#
+# Our X-Plane channel layout (see file header) needs:
+#   actuator_outputs.output[0] = aileron     → PWM_MAIN_FUNC1 = 201
+#   actuator_outputs.output[1] = v-tail R    → PWM_MAIN_FUNC2 = 212
+#   actuator_outputs.output[2] = motor       → PWM_MAIN_FUNC3 = 101  (motor1)
+#   actuator_outputs.output[3] = v-tail L    → PWM_MAIN_FUNC4 = 211
+
+param set-default PWM_MAIN_FUNC1 201
+param set-default PWM_MAIN_FUNC2 212
+param set-default PWM_MAIN_FUNC3 101
+param set-default PWM_MAIN_FUNC4 211
+
+# Disarm values (1500 = neutral for servos, 1000 = idle for motor)
+param set-default PWM_MAIN_DIS1 1500
+param set-default PWM_MAIN_DIS2 1500
+param set-default PWM_MAIN_DIS3 1000
+param set-default PWM_MAIN_DIS4 1500
+
+
+################################################################################
+# FIXED-WING ATTITUDE / RATE TUNING
+################################################################################
+# Generic-V-tail defaults — pilot can re-tune for a specific airframe.
+
+param set-default FW_R_LIM 60
+param set-default FW_P_LIM_MIN -45
+param set-default FW_P_LIM_MAX 45
+
+param set-default FW_AIRSPD_MIN  12
+param set-default FW_AIRSPD_TRIM 20
+param set-default FW_AIRSPD_MAX  35
+
+param set-default FW_THR_TRIM 0.55
+param set-default FW_THR_MAX  1.0
+param set-default FW_THR_MIN  0.0
+
+# Roll / pitch / yaw rate controllers — start with conservative gains
+param set-default FW_RR_P 0.08
+param set-default FW_RR_I 0.1
+param set-default FW_RR_FF 0.5
+
+param set-default FW_PR_P 0.08
+param set-default FW_PR_I 0.1
+param set-default FW_PR_FF 0.5
+
+param set-default FW_YR_P 0.05
+param set-default FW_YR_I 0.05
+param set-default FW_YR_FF 0.3
+
+
+################################################################################
+# MISSION / NAVIGATION
+################################################################################
+
+param set-default NAV_ACC_RAD 30
+param set-default MIS_TAKEOFF_ALT 50

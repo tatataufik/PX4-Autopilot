@@ -1,0 +1,52 @@
+#!/bin/sh
+# Default params for X-Plane V-tail fixed-wing SITL (SYS_AUTOSTART=5003)
+# Sourced by px4-rc.xplanesim after the airframe init script runs.
+# Use 'param set-default' so user-saved params take precedence.
+
+# EKF2 — tuned for X-Plane sensor rates (matches xplane_quad.params)
+param set-default EKF2_MULTI_IMU     1
+param set-default SENS_IMU_MODE      1
+param set-default EKF2_ACC_NOISE     0.5
+param set-default EKF2_GYR_NOISE     0.02
+
+# IMU loop rate matched to X-Plane RREF delivery.
+# See xplane_quad.params for the rate-vs-version rationale — same applies here.
+param set-default IMU_INTEG_RATE     50
+param set-default IMU_GYRO_RATEMAX   50
+
+# ── Fast-boot, ArduPilot-style pre-arm bypass ─────────────────────────────
+# Loosen gates that block arming in the first 30 s on a clean X-Plane bridge.
+
+# GPS health window: default 10 s of continuous healthy GPS. SITL GPS is
+# perfect from t=0 so 1 s is plenty.
+param set-default EKF2_REQ_GPS_H     1.0
+
+# Height reference: baro (= 0). Default 1 (GPS) waits on the GPS health
+# window above. Baro publishes from boot, closing the height gate sooner.
+param set-default EKF2_HGT_REF       0
+
+# Commander pre-arm sensor consistency thresholds — same relaxations as
+# the quad airframe (the static-aircraft accel/gyro consistency is fine
+# in SITL but the default thresholds are tight).
+param set-default COM_ARM_MAG_ANG    -1
+param set-default COM_ARM_MAG_STR    0
+param set-default COM_ARM_IMU_ACC    1.0
+param set-default COM_ARM_IMU_GYR    1.0
+
+# Mag-field WMM check off (bridge generates mag from the same WMM the
+# EKF would compare against — the check is redundant in SITL).
+param set-default EKF2_MAG_CHECK     0
+
+# Airspeed: the X-Plane bridge publishes differential_pressure derived
+# from sim/flightmodel/position/true_airspeed (RREF_TAS) — q = 0.5·ρ·v²
+# at the same 25 Hz cadence as baro. The airspeed_selector module cooks
+# it into airspeed_validated and pre-arm passes with a real sensor.
+# Keep SYS_HAS_NUM_ASPD = 1 (the rc.fw_defaults value) so the FW
+# controllers use the cooked airspeed for TECS.
+
+# Mission takeoff/landing requirement — rc.fw_defaults sets this to 2
+# (require a landing item). For SITL testing of tracking / waypoint
+# missions we don't want to author a full takeoff+land mission every
+# time, so relax to 1 (takeoff required only). Set to 0 if you want
+# to accept any waypoint list as a valid mission.
+param set-default MIS_TKO_LAND_REQ   1
