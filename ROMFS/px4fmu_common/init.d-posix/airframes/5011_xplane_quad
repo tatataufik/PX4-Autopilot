@@ -117,7 +117,7 @@ param set-default EKF2_BARO_DELAY 0.0
 param set-default EKF2_BARO_GATE 10.0
 
 # GPS
-param set-default EKF2_GPS_DELAY 0.0
+# EKF2_GPS_DELAY removed in current PX4 — delay derived from timestamps
 param set-default EKF2_GPS_P_NOISE 0.15
 param set-default EKF2_GPS_V_NOISE 0.15
 param set-default EKF2_GPS_P_GATE 5.0
@@ -130,7 +130,8 @@ param set-default EKF2_MAG_NOISE 0.05
 param set-default EKF2_MAG_GATE 5.0
 
 # Additional sensors
-param set-default EKF2_AGP_CTRL 3
+# EKF2_AGP_CTRL renamed to per-source EKF2_AGP{i}_CTRL in current PX4
+param set-default EKF2_AGP1_CTRL 3
 param set-default EKF2_ASP_DELAY 0.0
 param set-default EKF2_AVEL_DELAY 0.0
 param set-default EKF2_TAS_GATE 5.0
@@ -243,7 +244,7 @@ param set-default MPC_HOLD_MAX_Z 0.6
 
 param set-default MPC_POS_MODE 4
 param set-default MPC_ALT_MODE 0
-param set-default MPC_USE_HTE 1
+# MPC_USE_HTE removed — hover thrust estimator is unconditionally enabled
 param set-default MPC_VELD_LP 5
 param set-default MPC_VEL_MAN_BACK -1
 param set-default MPC_VEL_MAN_SIDE -1
@@ -258,10 +259,12 @@ param set-default MPC_XY_VEL_ALL -10
 # vehicle reaches takeoff altitude before the position controller has time
 # to drift horizontally toward the (potentially offset) TAKEOFF waypoint —
 # was the cause of "diagonal takeoff" complaint.
-# Aggressive takeoff (2026-05-24): 10 m/s climb + 0.3 s ramp so the vehicle
-# spends as little time as possible in the diagonal-climb-to-WP0 phase.
-# 50m alt reached in ~5 s; horizontal motion during that window is bounded.
-param set-default MPC_TKO_SPEED 10.0
+# TKO_SPEED clamped to MPC_Z_VEL_MAX_UP (2026-05-27): when TKO_SPEED >
+# Z_VEL_MAX_UP the trajectory generator plans for the higher speed but the
+# velocity controller caps at the lower one. The trajectory then completes
+# (v_sp→0) before the drone reaches MIS_TAKEOFF_ALT — vehicle gets stuck
+# at an intermediate altitude (~(Z_VEL_MAX_UP/TKO_SPEED) × target).
+param set-default MPC_TKO_SPEED 3.0
 param set-default MPC_TKO_RAMP_T 0.3
 
 param set-default MPC_LAND_ALT1 10
@@ -281,7 +284,7 @@ param set-default LNDMC_ALT_GND 2
 param set-default LNDMC_XY_VEL_MAX 2.0
 param set-default LNDMC_Z_VEL_MAX 0.7
 param set-default LNDMC_ROT_MAX 30
-param set-default LNDMC_TRIG_TIME 0.5
+# LNDMC_TRIG_TIME removed — trigger time now derived internally from velocity thresholds
 
 
 ################################################################################
@@ -326,7 +329,11 @@ param set-default CP_GUIDE_ANG 30
 param set-default CP_DELAY 0.4
 
 param set-default HTE_ACC_GATE 3
-param set-default HTE_HT_ERR_INIT 0.1
+# HTE_HT_ERR_INIT restored to default 1.0 (2026-05-27): 0.1 was 10× tighter
+# than default, so a biased initial estimate (from the bridge's pre-arm IMU
+# gate) stayed locked-in for the whole climb — contributed to "stuck at
+# certain altitude during takeoff".
+param set-default HTE_HT_ERR_INIT 1.0
 param set-default HTE_HT_NOISE 0.0036
 param set-default HTE_THR_RANGE 0.2
 param set-default HTE_VXY_THR 10

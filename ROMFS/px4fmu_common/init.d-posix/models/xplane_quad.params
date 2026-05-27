@@ -4,7 +4,8 @@
 # Use 'param set-default' so user-saved params take precedence.
 
 # EKF2 — tuned for X-Plane sensor rates (~100 Hz RREF gyro/accel, ~30 Hz DATA@)
-param set-default EKF2_GPS_DELAY     10
+# (EKF2_GPS_DELAY removed in current PX4; EKF2 picks up GPS delay from
+# timestamps automatically. Leave the value untouched.)
 param set-default EKF2_MULTI_IMU     1
 param set-default SENS_IMU_MODE      1
 param set-default EKF2_ACC_NOISE     0.5

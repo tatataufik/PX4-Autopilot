@@ -137,15 +137,16 @@ struct DRefEntry {
 };
 
 
-class SimulatorXPlane : public ModuleParams
+class SimulatorXPlane final : public ModuleParams
 {
 public:
 	static int start(int argc, char *argv[]);
 
+	~SimulatorXPlane();
+
 private:
 	SimulatorXPlane(const char *xplane_ip, uint16_t xplane_port,
 			uint16_t bind_port, const char *model_name);
-	~SimulatorXPlane();
 
 	void run();
 	void send();
@@ -192,8 +193,8 @@ private:
 
 	// ── UDP socket ───────────────────────────────────────────────────────────
 	int                _fd{-1};
-	struct sockaddr_in _xplane_addr{};
-	char               _xplane_ip[32]{};
+	struct sockaddr_in _xplane_addr {};
+	char               _xplane_ip[32] {};
 	uint16_t           _xplane_port{49000};
 	uint16_t           _bind_port{49005};
 
@@ -241,7 +242,6 @@ private:
 	static constexpr float GYRO_BIAS_STDDEV_LIMIT  = 0.05f;   // rad/s ≈ 2.9°/s
 	float _gyro_bias_x{0.f},     _gyro_bias_y{0.f},     _gyro_bias_z{0.f};
 	float _gyro_bias_sum_x{0.f}, _gyro_bias_sum_y{0.f}, _gyro_bias_sum_z{0.f};
-	float _gyro_bias_sum_sq_x{0.f}, _gyro_bias_sum_sq_y{0.f}, _gyro_bias_sum_sq_z{0.f};
 	int   _gyro_bias_count_x{0}, _gyro_bias_count_y{0}, _gyro_bias_count_z{0};
 	bool  _gyro_bias_locked_x{false}, _gyro_bias_locked_y{false}, _gyro_bias_locked_z{false};
 	bool  _gyro_bias_reported{false};
