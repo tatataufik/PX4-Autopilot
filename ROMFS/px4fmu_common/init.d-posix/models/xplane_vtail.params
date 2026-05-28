@@ -63,12 +63,14 @@ param set-default EKF2_MAG_CHECK     0
 param set-default MIS_TKO_LAND_REQ   1
 
 # Pitch attitude offset held in Stabilized mode with centered sticks.
-# Trade-off: this value is used during the liftoff transient too. A high
-# offset (e.g. 6°) keeps cruise level hands-off but commands an aggressive
-# pitch-up the moment the wheels leave the ground, and with FW_P_TC=0.25
-# the rate controller drives the elevator hard enough that the wing
-# overshoots into stall AoA at the low post-liftoff airspeed → falls back.
-# 1° is the takeoff-safe end: gentle rotation, no stall. Cruise needs a
-# small constant back-stick to hold altitude — for hands-off cruise prefer
-# Position/Altitude mode (TECS-managed) instead of bumping this up.
-param set-default FW_PSP_OFF         1
+# Set to the airframe's level-flight trim pitch (~5° nose-up for this
+# trainer) so Stabilized cruises level and a Manual→Stabilized switch
+# doesn't nose-down. The same value also shifts the TECS pitch reference,
+# so the AUTO climbout floor is (FW_TKO_PITCH_MIN − FW_PSP_OFF) — see the
+# FW_TKO_PITCH_MIN note in 5003_xplane_vtail; the two must move together to
+# keep that floor near 9°.
+# Trade-off: this is also the centered-stick attitude at a Stabilized
+# TAKEOFF, so 5° commands a brisk rotation right at liftoff. Take off in
+# AUTO (mission, TECS-managed) or hold forward stick during the ground roll
+# in Stabilized; don't rely on centered sticks to roll out.
+param set-default FW_PSP_OFF         5

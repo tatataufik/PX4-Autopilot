@@ -168,10 +168,22 @@ param set-default RWTO_PSP 3
 # Lift-off airspeed for the climbout. Default (-1) falls back to FW_AIRSPD_MIN
 # (12 m/s here), and RWTO_ROT_AIRSPD then becomes 0.9 × 12 = 10.8 m/s — well
 # below practical lift-off speed for this airframe (cruise 20 m/s). At that
-# rotation speed the autopilot commands FW_TKO_PITCH_MIN=10° pitch, AoA goes
+# rotation speed the autopilot commands the climbout pitch floor, AoA goes
 # past CLmax, and the aircraft fails to climb. 18 m/s gives enough margin
 # above stall to hold the climbout pitch without separating the wing.
 param set-default FW_TKO_AIRSPD 18
+
+# Max achievable climb rate. This MUST be a rate the airframe can actually
+# hold at FW_THR_MAX and trim airspeed — it is the climbout climb-rate
+# TARGET, and during AUTO takeoff TECS underspeed protection is DISABLED, so
+# an over-optimistic value makes TECS keep pitching up to chase a climb it
+# can't deliver → accelerated stall at 16-18 m/s (above the 1g stall of 12,
+# so the airspeed gauge looks fine right up to the break). The 5.0 default
+# is too high for this trainer: 5 m/s at 20 m/s trim is a ~14° flight path
+# (~20° pitch), steeper still at the 16 m/s lift-off speed. 3.0 keeps the
+# climbout pitch in a margin the wing can hold. Raise toward the airframe's
+# real best-climb rate if it climbs cleanly and you want a steeper departure.
+param set-default FW_T_CLMB_MAX 3.0
 
 
 ################################################################################
@@ -184,12 +196,12 @@ param set-default MIS_TAKEOFF_ALT 50
 # Minimum pitch during AUTO takeoff climbout. Effective floor for TECS is
 # (FW_TKO_PITCH_MIN − FW_PSP_OFF) because TECS receives pitch limits with
 # FW_PSP_OFF subtracted and its output is consumed as absolute pitch (see
-# fw_lateral_longitudinal_control). With FW_PSP_OFF=1 (set in
-# xplane_vtail.params for Stabilized takeoff safety), an effective floor
-# of ~9° is what flies clean on this airframe → FW_TKO_PITCH_MIN = 10.
-# If FW_PSP_OFF is changed, this needs to track it (keep 10 - FW_PSP_OFF
-# ≈ 9 for a safe climbout).
-param set-default FW_TKO_PITCH_MIN 10
+# fw_lateral_longitudinal_control). A ~9° effective floor flies clean on
+# this airframe. FW_PSP_OFF=5 (set in xplane_vtail.params to match cruise
+# trim) → FW_TKO_PITCH_MIN = 14 keeps the floor at 9°.
+# These two MUST move together: if FW_PSP_OFF changes, set
+# FW_TKO_PITCH_MIN = FW_PSP_OFF + 9.
+param set-default FW_TKO_PITCH_MIN 14
 
 
 ################################################################################
