@@ -38,6 +38,7 @@ px4_add_module(
 	DEPENDS
 		conversion
 		geo
+		atmosphere
 		world_magnetic_model
 		drivers_accelerometer
 		drivers_gyroscope

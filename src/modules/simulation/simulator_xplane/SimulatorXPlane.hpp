@@ -69,6 +69,7 @@
 #include <uORB/Publication.hpp>
 #include <uORB/Subscription.hpp>
 #include <uORB/topics/actuator_outputs.h>
+#include <uORB/topics/differential_pressure.h>
 #include <uORB/topics/sensor_baro.h>
 #include <uORB/topics/sensor_gps.h>
 #include <uORB/topics/vehicle_angular_velocity.h>
@@ -109,6 +110,7 @@ enum XPlaneRrefCode : uint32_t {
 	RREF_THETA   = 14, // sim/flightmodel/position/theta  [deg pitch]
 	RREF_PHI     = 15, // sim/flightmodel/position/phi    [deg roll]
 	RREF_PSI     = 16, // sim/flightmodel/position/psi    [deg true heading]
+	RREF_TAS     = 17, // sim/flightmodel/position/true_airspeed [m/s]
 };
 
 static constexpr float GRAVITY_MSS = 9.80665f;
@@ -132,6 +134,7 @@ struct DRefEntry {
 	int8_t  channel{-1};   // actuator_outputs.output[] index, -1 for FIXED
 	float   scale{1.0f};   // range / multiplier
 	float   value{0.0f};   // for FIXED type
+	bool    invert{false}; // negate output[channel] before scaling (mirrored servos)
 
 	DRefEntry *next{nullptr};
 };
@@ -174,6 +177,7 @@ private:
 	void publish_mag(hrt_abstime t);
 	void publish_baro(hrt_abstime t);
 	void publish_gps(hrt_abstime t);
+	void publish_airspeed(hrt_abstime t);
 	void mag_body(float &bx, float &by, float &bz) const;
 	void update_mag_earth();   // refresh earth-frame mag NED from GPS via WMM
 
@@ -183,6 +187,7 @@ private:
 	PX4Magnetometer  _px4_mag  {197388,  ROTATION_NONE};
 
 	uORB::PublicationMulti<sensor_baro_s> _baro_pub{ORB_ID(sensor_baro)};
+	uORB::PublicationMulti<differential_pressure_s> _diff_pres_pub{ORB_ID(differential_pressure)};
 	uORB::PublicationMulti<sensor_gps_s>  *_gps_pub{nullptr};
 
 	// ── Actuator subscription ────────────────────────────────────────────────
@@ -212,6 +217,7 @@ private:
 	float _accel_x{0}, _accel_y{0}, _accel_z{-GRAVITY_MSS};
 	float _pitch_rad{0}, _roll_rad{0}, _yaw_rad{0};
 	float _lat_deg{0}, _lon_deg{0}, _alt_m{0};
+	float _airspeed_mps{0};                       // true airspeed from X-Plane RREF_TAS
 	float _vel_n{0}, _vel_e{0}, _vel_d{0};
 
 	// Earth magnetic field in NED (Gauss). Refreshed from GPS via WMM when the
@@ -283,6 +289,7 @@ private:
 	uint8_t _rref_vel_mask{0};   // bits 0,1,2 = VX,VY,VZ received
 	uint8_t _rref_pos_mask{0};   // bits 0,1,2 = LAT,LON,ALT received
 	uint8_t _rref_att_mask{0};   // bits 0,1,2 = THETA,PHI,PSI received
+	bool    _has_airspeed{false};
 	bool    _has_pos{false};
 	bool    _has_vel{false};
 	bool    _has_att{false};

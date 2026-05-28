@@ -38,6 +38,7 @@
 #include <px4_platform_common/time.h>
 #include <lib/mathlib/mathlib.h>
 #include <lib/geo/geo.h>                          // CONSTANTS_ONE_G
+#include <lib/atmosphere/atmosphere.h>            // getPressureFromAltitude (ICAO std atmos)
 #include <lib/world_magnetic_model/geo_mag_declination.h>
 #include <drivers/device/Device.hpp>
 #include <lib/drivers/device/Device.hpp>
@@ -100,6 +101,7 @@ static const char *RREF_NAMES[] = {
 	"sim/flightmodel/position/theta",       // code RREF_THETA=14 (pitch deg)
 	"sim/flightmodel/position/phi",         // code RREF_PHI=15   (roll deg)
 	"sim/flightmodel/position/psi",         // code RREF_PSI=16   (true heading deg)
+	"sim/flightmodel/position/true_airspeed", // code RREF_TAS=17 (m/s, TAS)
 };
 static constexpr int N_RREF = sizeof(RREF_NAMES) / sizeof(RREF_NAMES[0]);
 
@@ -127,6 +129,7 @@ struct MapFields {
 	int    channel;
 	float  range;
 	float  value;
+	bool   invert;       // negate actuator output before scaling (for mirrored servos)
 	bool   has_channel;
 	bool   has_range;
 	bool   has_value;
@@ -217,6 +220,13 @@ static const char *parse_map_fields(const char *p, MapFields *f)
 				f->type[sizeof(f->type) - 1] = '\0';
 			}
 
+		} else if (*p == 't' || *p == 'f') {
+			// JSON boolean literal — currently only "invert" uses one.
+			const bool bval = (*p == 't');
+			p += bval ? 4 : 5;   // skip "true" or "false"
+
+			if (strcmp(key, "invert") == 0) { f->invert = bval; }
+
 		} else {
 			float num = 0.0f;
 			p = parse_number(p, &num);
@@ -228,6 +238,8 @@ static const char *parse_map_fields(const char *p, MapFields *f)
 			else if (strcmp(key, "range")   == 0) { f->range   = num;      f->has_range   = true; }
 
 			else if (strcmp(key, "value")   == 0) { f->value   = num;      f->has_value   = true; }
+
+			else if (strcmp(key, "invert")  == 0) { f->invert  = ((int)num != 0); }  // numeric form: "invert": 1
 
 			else if (strcmp(key, "debug")   == 0) { /* handled by caller */ }
 		}
@@ -323,6 +335,7 @@ bool SimulatorXPlane::load_dref_map(const char *model_name)
 		strncpy(e->name, dref_name, sizeof(e->name) - 1);
 		e->name[sizeof(e->name) - 1] = '\0';
 		e->channel = (int8_t)fields.channel;
+		e->invert  = fields.invert;
 
 		if (strcmp(fields.type, "fixed") == 0) {
 			e->type  = DRefEntry::Type::FIXED;
@@ -516,8 +529,12 @@ void SimulatorXPlane::send_actuator_drefs()
 
 		if (e->channel < 0 || e->channel >= (int)actuator_outputs_s::NUM_ACTUATOR_OUTPUTS) { continue; }
 
-		const float out = _actuator_outputs.output[e->channel];
-		float       val = 0.0f;
+		// Per-entry inversion (for mirrored servos like left/right aileron
+		// driven by a single PX4 channel — the mirrored side carries
+		// "invert": true in the JSON map and gets the negated output).
+		const float raw_out = _actuator_outputs.output[e->channel];
+		const float out     = e->invert ? -raw_out : raw_out;
+		float       val     = 0.0f;
 
 		switch (e->type) {
 		case DRefEntry::Type::RANGE:
@@ -606,6 +623,8 @@ void SimulatorXPlane::handle_rref(const uint8_t *pkt, size_t len)
 		case RREF_PHI:   _roll_rad  = math::radians(val); _rref_att_mask |= 0x2; break;
 
 		case RREF_PSI:   _yaw_rad   = math::radians(val); _rref_att_mask |= 0x4; break;
+
+		case RREF_TAS:   _airspeed_mps = val; _has_airspeed = true; break;
 
 		default: break;
 		}
@@ -728,6 +747,11 @@ void SimulatorXPlane::handle_rref(const uint8_t *pkt, size_t len)
 
 		if (t - _t_last_baro >= 40_ms) {
 			publish_baro(t);
+
+			if (_has_airspeed) {
+				publish_airspeed(t);
+			}
+
 			_t_last_baro = t;
 		}
 	}
@@ -817,6 +841,11 @@ void SimulatorXPlane::apply_data_group(uint32_t gid, const float *d)
 
 	if (_has_pos && (t - _t_last_baro) >= 40_ms) {
 		publish_baro(t);
+
+		if (_has_airspeed) {
+			publish_airspeed(t);
+		}
+
 		_t_last_baro = t;
 	}
 
@@ -947,13 +976,38 @@ void SimulatorXPlane::publish_baro(hrt_abstime t)
 {
 	sensor_baro_s baro{};
 	baro.timestamp_sample = t;
-	// 1 Pa RMS noise — matches sensor_baro_sim and prevents DataValidator from
-	// flagging the stream STALE when altitude is constant on the ground.
-	baro.pressure         = 101325.0f * expf(-_alt_m / 8434.5f) + xplane_wgn() * 1.0f;
+	// Use the same ICAO standard-atmosphere model PX4's VehicleAirData uses to
+	// decode pressure back to altitude. An isothermal exp() model here would
+	// produce a height bias that grows with field elevation (~1 m at 500 m MSL,
+	// several m higher) and keeps the EKF baro-vs-GPS innovation from zeroing.
+	// 1 Pa RMS noise keeps DataValidator from flagging the stream STALE on the
+	// ground when altitude is constant.
+	baro.pressure         = atmosphere::getPressureFromAltitude(_alt_m) + xplane_wgn() * 1.0f;
 	baro.temperature      = 20.0f + xplane_wgn() * 0.01f;
 	baro.device_id        = 6620172;
 	baro.timestamp        = hrt_absolute_time();
 	_baro_pub.publish(baro);
+}
+
+void SimulatorXPlane::publish_airspeed(hrt_abstime t)
+{
+	// X-Plane RREF_TAS is true airspeed in m/s. Convert to differential
+	// pressure using q = 0.5 * rho * v² (rho = 1.225 kg/m³ at sea level).
+	// PX4's airspeed_selector module subscribes to differential_pressure and
+	// cooks it into airspeed_validated using EKF wind + air density.
+	//
+	// Tiny noise injection (~0.5 Pa RMS) keeps DataValidator from flagging
+	// the stream STALE on the ground when TAS is zero.
+	const float v   = _airspeed_mps;
+	const float rho = 1.225f;
+	differential_pressure_s diff{};
+	diff.timestamp_sample        = t;
+	diff.differential_pressure_pa = 0.5f * rho * v * v + xplane_wgn() * 0.5f;
+	diff.temperature              = 20.0f + xplane_wgn() * 0.01f;
+	diff.device_id                = 6620173;   // distinct from baro device_id
+	diff.error_count              = 0;
+	diff.timestamp                = hrt_absolute_time();
+	_diff_pres_pub.publish(diff);
 }
 
 void SimulatorXPlane::publish_gps(hrt_abstime t)

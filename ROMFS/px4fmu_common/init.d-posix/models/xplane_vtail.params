@@ -1,40 +1,74 @@
 #!/bin/sh
-# Default params for X-Plane generic V-tail fixed-wing SITL (SYS_AUTOSTART=5003)
+# Default params for X-Plane V-tail fixed-wing SITL (SYS_AUTOSTART=5003)
 # Sourced by px4-rc.xplanesim after the airframe init script runs.
+# Use 'param set-default' so user-saved params take precedence.
 
-# EKF2
-param set-default EKF2_GPS_DELAY     110
-param set-default EKF2_MULTI_IMU     0
+# EKF2 — tuned for X-Plane sensor rates (matches xplane_quad.params)
+param set-default EKF2_MULTI_IMU     1
 param set-default SENS_IMU_MODE      1
 param set-default EKF2_ACC_NOISE     0.5
 param set-default EKF2_GYR_NOISE     0.02
 
-# FW roll controller
-param set-default FW_RR_P            0.07
-param set-default FW_RR_I            0.02
-param set-default FW_RR_FF           0.35
-param set-default FW_R_TC            0.45
+# IMU loop rate matched to X-Plane RREF delivery.
+# See xplane_quad.params for the rate-vs-version rationale — same applies here.
+param set-default IMU_INTEG_RATE     50
+param set-default IMU_GYRO_RATEMAX   50
 
-# FW pitch controller
-param set-default FW_PR_P            0.07
-param set-default FW_PR_I            0.02
-param set-default FW_PR_FF           0.30
-param set-default FW_P_TC            0.45
+# ── Fast-boot, ArduPilot-style pre-arm bypass ─────────────────────────────
+# Loosen gates that block arming in the first 30 s on a clean X-Plane bridge.
 
-# FW yaw (V-tail combined)
-param set-default FW_YR_P            0.05
-param set-default FW_YR_I            0.00
-param set-default FW_YR_FF           0.30
+# GPS health window: default 10 s of continuous healthy GPS before the EKF
+# accepts it. SITL GPS is perfect from t=0, so drop to the 0.1 s floor for
+# ArduPilot/satria-style near-instant arming. (Param doc warns against this
+# on real hardware where GPS genuinely needs a settle window — SITL only.)
+param set-default EKF2_REQ_GPS_H     0.1
 
-# Airspeed — generic trainer class
-param set-default FW_AIRSPD_MIN      12.0
-param set-default FW_AIRSPD_TRIM     18.0
-param set-default FW_AIRSPD_MAX      35.0
-param set-default FW_AIRSPD_STALL    10.0
+# GPS check bitmask. Default 2047 enables the drift/speed-offset checks
+# (bits 5-8: H/V position drift, H/V speed offset). Those filter the GPS
+# drift rate with a 10 s time constant (gnss_checks.cpp), so even with
+# perfectly steady SITL GPS they take ~10-30 s to settle below threshold
+# — this is the sole cause of the slow pre-arm here. Clearing bits 5-8
+# (2047 − 480 = 1567) drops the wait while keeping every instantaneous
+# quality check: sats, PDOP, EPH, EPV, speed-acc, spoofing, fix type.
+param set-default EKF2_GPS_CHECK      1567
 
-# Throttle
-param set-default FW_THR_MIN         0.05
-param set-default FW_THR_MAX         1.00
-param set-default FW_THR_CRUISE      0.50
+# Height reference: baro (= 0). Default 1 (GPS) waits on the GPS health
+# window above. Baro publishes from boot, closing the height gate sooner.
+param set-default EKF2_HGT_REF       0
 
-param set-default BAT1_N_CELLS       4
+# Commander pre-arm sensor consistency thresholds — same relaxations as
+# the quad airframe (the static-aircraft accel/gyro consistency is fine
+# in SITL but the default thresholds are tight).
+param set-default COM_ARM_MAG_ANG    -1
+param set-default COM_ARM_MAG_STR    0
+param set-default COM_ARM_IMU_ACC    1.0
+param set-default COM_ARM_IMU_GYR    1.0
+
+# Mag-field WMM check off (bridge generates mag from the same WMM the
+# EKF would compare against — the check is redundant in SITL).
+param set-default EKF2_MAG_CHECK     0
+
+# Airspeed: the X-Plane bridge publishes differential_pressure derived
+# from sim/flightmodel/position/true_airspeed (RREF_TAS) — q = 0.5·ρ·v²
+# at the same 25 Hz cadence as baro. The airspeed_selector module cooks
+# it into airspeed_validated and pre-arm passes with a real sensor.
+# Keep SYS_HAS_NUM_ASPD = 1 (the rc.fw_defaults value) so the FW
+# controllers use the cooked airspeed for TECS.
+
+# Mission takeoff/landing requirement — rc.fw_defaults sets this to 2
+# (require a landing item). For SITL testing of tracking / waypoint
+# missions we don't want to author a full takeoff+land mission every
+# time, so relax to 1 (takeoff required only). Set to 0 if you want
+# to accept any waypoint list as a valid mission.
+param set-default MIS_TKO_LAND_REQ   1
+
+# Pitch attitude offset held in Stabilized mode with centered sticks.
+# Trade-off: this value is used during the liftoff transient too. A high
+# offset (e.g. 6°) keeps cruise level hands-off but commands an aggressive
+# pitch-up the moment the wheels leave the ground, and with FW_P_TC=0.25
+# the rate controller drives the elevator hard enough that the wing
+# overshoots into stall AoA at the low post-liftoff airspeed → falls back.
+# 1° is the takeoff-safe end: gentle rotation, no stall. Cruise needs a
+# small constant back-stick to hold altitude — for hands-off cruise prefer
+# Position/Altitude mode (TECS-managed) instead of bumping this up.
+param set-default FW_PSP_OFF         1
