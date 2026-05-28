@@ -261,6 +261,7 @@ void Tracking::check_mode_registration()
 {
 	register_ext_component_reply_s reply{};
 	int tries = reply.ORB_QUEUE_LENGTH;
+
 	while (_register_reply_sub.update(&reply) && --tries >= 0) {
 		if (reply.request_id == _mode_request_id && reply.success) {
 			_arming_check_id = reply.arming_check_id;
@@ -276,11 +277,11 @@ void Tracking::check_mode_registration()
 			const int external_idx = (int)_mode_id - 23;  /* 0..7 */
 			const int main_mode    = 4;                   /* PX4_CUSTOM_MAIN_MODE_AUTO */
 			const int sub_mode     = (external_idx >= 0 && external_idx < 8)
-			                         ? (11 + external_idx)
-			                         : -1;
+						 ? (11 + external_idx)
+						 : -1;
 			const uint32_t custom_mode = (sub_mode > 0)
-			                             ? (((uint32_t)sub_mode) << 24) | (((uint32_t)main_mode) << 16)
-			                             : 0u;
+						     ? (((uint32_t)sub_mode) << 24) | (((uint32_t)main_mode) << 16)
+						     : 0u;
 
 			PX4_INFO("tracking: registered  arming_check_id=%d  mode_id=%d (nav_state)  "
 				 "→ DO_SET_MODE main=%d sub=%d  custom_mode=0x%08x",
@@ -337,6 +338,7 @@ void Tracking::run()
 			_sent_mode_registration = true;
 			continue;
 		}
+
 		if (_mode_id < 0 || _arming_check_id < 0) {
 			check_mode_registration();
 			continue;
@@ -370,15 +372,18 @@ void Tracking::run()
 			// since once we start publishing vehicle_attitude_setpoint the
 			// downstream thrust setpoint will reflect OUR commands.
 			vehicle_thrust_setpoint_s ts{};
+
 			if (_thrust_sp_sub.copy(&ts)) {
 				// xyz[2] is body-Z thrust (negative = up in FRD on copter).
 				const float magnitude = fabsf(ts.xyz[2]);
+
 				if (magnitude > 0.05f && magnitude < 1.0f) {
 					_entry_thrust_base = magnitude;
 				}
 			}
+
 			PX4_INFO("tracking: TRACKING active  base_thrust=%.0f%%",
-			         (double)(_entry_thrust_base * 100.f));
+				 (double)(_entry_thrust_base * 100.f));
 			// Re-publish the control-mode config so its timestamp is fresh.
 			// Commander rejects config_control_setpoints older than 10 ms at
 			// the activation instant and silently falls back to default
@@ -433,6 +438,7 @@ void Tracking::run()
 		// active. Defensive against commander re-evaluating mode flags on
 		// transitions we may have missed (re-arm, brief failsafe trip, etc.)
 		static hrt_abstime last_cfg_refresh_us = 0;
+
 		if (now - last_cfg_refresh_us > 1_s) {
 			configure_tracking_mode();
 			last_cfg_refresh_us = now;
@@ -525,9 +531,9 @@ void Tracking::run()
 
 		if (has_gps) {
 			horiz_dist_m = get_distance_to_next_waypoint(
-			                   gpos.lat, gpos.lon,
-			                   (double)_p_tgt_lat.get(),
-			                   (double)_p_tgt_lon.get());
+					       gpos.lat, gpos.lon,
+					       (double)_p_tgt_lat.get(),
+					       (double)_p_tgt_lon.get());
 			alt_rel_m = gpos.alt - _p_tgt_alt.get();
 
 			/* ── proximity alert ────────────────────────────── */
@@ -538,6 +544,7 @@ void Tracking::run()
 
 				if (close_now && !_close_prev) {
 					PX4_INFO("TRK proximity: CLOSE (%.0f m)", (double)horiz_dist_m);
+
 				} else if (!close_now && _close_prev) {
 					PX4_INFO("TRK proximity: FAR  (%.0f m)", (double)horiz_dist_m);
 				}
@@ -562,7 +569,7 @@ void Tracking::run()
 		const float settle_s = _p_settle_s.get();
 		const float elapsed  = (now - _mode_entry_us) * 1e-6f;
 		const float ramp     = (settle_s > 0.f) ?
-		                       math::constrain(elapsed / settle_s, 0.f, 1.f) : 1.f;
+				       math::constrain(elapsed / settle_s, 0.f, 1.f) : 1.f;
 
 		/* dt = wall-clock interval since the previous tracking_message.
 		 * We only reach this point on a new-msg arrival, so this is
@@ -572,7 +579,7 @@ void Tracking::run()
 		 */
 		static hrt_abstime last_pid_us = 0;
 		const float dt = (last_pid_us == 0) ? 0.033f :
-		                 math::constrain((now - last_pid_us) * 1e-6f, 0.005f, 0.2f);
+				 math::constrain((now - last_pid_us) * 1e-6f, 0.005f, 0.2f);
 		last_pid_us = now;
 
 		/* ── lean limit from MPC_TILTMAX_AIR (degrees) ───────────────
@@ -598,30 +605,56 @@ void Tracking::run()
 
 		roll_sp_rad = math::constrain(roll_sp_rad, -lean_max_rad, lean_max_rad);
 
-		/* ── pitch / throttle split (satria ArduCopter style) ─────────
+		/* ── pitch / throttle split (vehicle-type aware) ─────────────
 		 * Baseline = TRK_CRUISE_THR (configurable, fraction in [0,1]).
-		 * Replaces the HTE-snapshot baseline which depended on a
-		 * possibly-unconverged hover-thrust estimate at mode-entry.
 		 *
-		 * Vertical error handling:
-		 *   ey > 0  (target above) → nose UP via pitch PID.
-		 *                            PX4 convention: positive pitch_sp
-		 *                            = nose up. PID input −ey gives
-		 *                            PID error +ey, so output > 0 when
-		 *                            target above → correct sign.
-		 *   ey < 0  (target below) → REDUCE THROTTLE, hold pitch level.
-		 *                            Pitching down on a copter sends
-		 *                            it forward (wrong); reducing
-		 *                            thrust sends it down (right).
+		 * ROTARY_WING (satria ArduCopter style):
+		 *   ey > 0 (target above) → nose UP via pitch PID.
+		 *   ey < 0 (target below) → REDUCE THROTTLE, hold pitch level.
+		 *                           Pitching a copter down sends it
+		 *                           forward (wrong); cutting thrust
+		 *                           sends it down (right).
+		 *
+		 * FIXED_WING (pitch-for-airspeed):
+		 *   pitch tracks ey in BOTH directions — a wing can pitch down to
+		 *   chase a low target. Throttle then trims around cruise to hold
+		 *   airspeed through the pitch change: a nose-up demand costs
+		 *   energy → add throttle; nose-down → back off. The throttle PID
+		 *   input is the commanded pitch (the airspeed-loss proxy), per
+		 *   the module's vehicle-type-aware design.
+		 *
+		 * PX4 sign note: PID setpoint 0 with input −x gives error +x, so a
+		 * positive ey (target above) yields positive pitch output = nose up.
 		 */
+		const bool is_fixed_wing =
+			(status.vehicle_type == vehicle_status_s::VEHICLE_TYPE_FIXED_WING);
+
 		const float cruise_thr = math::constrain(_p_cruise_thr.get() * 0.01f, 0.f, 1.f);
 		float thrust_norm = cruise_thr * ramp;
 		float pitch_sp_rad = 0.f;
 
 		if (fabsf(ey) < 1e-6f) {
 			_pid_pitch.resetIntegral();
+			_pid_throttle.resetIntegral();
+
+		} else if (is_fixed_wing) {
+			/* plane: pitch toward the target up or down */
+			_pid_pitch.setSetpoint(0.f);
+			pitch_sp_rad = math::constrain(_pid_pitch.update(-ey, dt) * ramp,
+						       -lean_max_rad, lean_max_rad);
+
+			/* throttle trims around cruise to hold airspeed. Input
+			 * −pitch_sp_rad (setpoint 0) → error = pitch_sp_rad → output
+			 * > 0 when nose-up → add throttle. Output limit is ±50 %
+			 * (see update_pid_gains), applied as a fraction of full. */
+			_pid_throttle.setSetpoint(0.f);
+			const float thro_pct = _pid_throttle.update(-pitch_sp_rad, dt) * ramp;
+			thrust_norm = math::constrain(cruise_thr * ramp + thro_pct * 0.01f, 0.f, 1.f);
 
 		} else {
+			/* copter: pitch up for target-above, cut throttle for
+			 * target-below, hold pitch level otherwise. */
+			_pid_throttle.resetIntegral();
 			_pid_pitch.setSetpoint(0.f);
 			const float pid_out = _pid_pitch.update(-ey, dt) * ramp;
 
@@ -643,13 +676,18 @@ void Tracking::run()
 		const matrix::Quatf q_sp(matrix::Eulerf(roll_sp_rad, pitch_sp_rad, euler.psi()));
 		q_sp.copyTo(att_sp.q_d);
 
-		// FRD body frame: copter thrust on −Z (down-axis NED inverted).
-		// Plane thrust on +X kept as a fallback so the same publish path
-		// works for both vehicle types if the user later re-enables the
-		// is_copter switch.
-		att_sp.thrust_body[0] = 0.f;
+		// Vehicle-type-aware "body push": which FRD body axis the tracking
+		// throttle is applied to.
+		//   FIXED_WING  -> forward axis (+X): thrust drives the airframe
+		//                  along its nose, lift comes from the wing, so a
+		//                  Z-axis push is meaningless.
+		//   ROTARY_WING -> up axis (-Z in FRD, i.e. NED down inverted):
+		//                  thrust holds/changes altitude, there is no
+		//                  body-forward thrust to command.
+		// (is_fixed_wing computed once in the pitch/throttle split above.)
+		att_sp.thrust_body[0] = is_fixed_wing ? thrust_norm : 0.f;
 		att_sp.thrust_body[1] = 0.f;
-		att_sp.thrust_body[2] = -thrust_norm;
+		att_sp.thrust_body[2] = is_fixed_wing ? 0.f : -thrust_norm;
 
 		_att_sp_pub.publish(att_sp);
 
@@ -659,17 +697,17 @@ void Tracking::run()
 
 			if (has_gps) {
 				PX4_INFO("TRK d=%.0fm alt=%.0fm ex=%.2f ey=%.2f navx=%.1f navy=%.1f thr=%.0f%%",
-				         (double)horiz_dist_m, (double)alt_rel_m,
-				         (double)math::degrees(ex), (double)math::degrees(ey),
-				         (double)math::degrees(roll_sp_rad), (double)math::degrees(pitch_sp_rad),
-				         (double)(thrust_norm * 100.0f));
+					 (double)horiz_dist_m, (double)alt_rel_m,
+					 (double)math::degrees(ex), (double)math::degrees(ey),
+					 (double)math::degrees(roll_sp_rad), (double)math::degrees(pitch_sp_rad),
+					 (double)(thrust_norm * 100.0f));
 			}
 
 			PX4_INFO("TRK p_ahrs=%.1f nav=%.1f thr=%.1f%% ramp=%.2f",
-			         (double)math::degrees(actual_pitch_rad),
-			          (double)math::degrees(pitch_sp_rad),
-			          (double)thrust_norm * 100.0f,
-			         (double)ramp);
+				 (double)math::degrees(actual_pitch_rad),
+				 (double)math::degrees(pitch_sp_rad),
+				 (double)thrust_norm * 100.0f,
+				 (double)ramp);
 		}
 	}
 
