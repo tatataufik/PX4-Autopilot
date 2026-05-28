@@ -17,9 +17,20 @@ param set-default IMU_GYRO_RATEMAX   50
 # ── Fast-boot, ArduPilot-style pre-arm bypass ─────────────────────────────
 # Loosen gates that block arming in the first 30 s on a clean X-Plane bridge.
 
-# GPS health window: default 10 s of continuous healthy GPS. SITL GPS is
-# perfect from t=0 so 1 s is plenty.
-param set-default EKF2_REQ_GPS_H     1.0
+# GPS health window: default 10 s of continuous healthy GPS before the EKF
+# accepts it. SITL GPS is perfect from t=0, so drop to the 0.1 s floor for
+# ArduPilot/satria-style near-instant arming. (Param doc warns against this
+# on real hardware where GPS genuinely needs a settle window — SITL only.)
+param set-default EKF2_REQ_GPS_H     0.1
+
+# GPS check bitmask. Default 2047 enables the drift/speed-offset checks
+# (bits 5-8: H/V position drift, H/V speed offset). Those filter the GPS
+# drift rate with a 10 s time constant (gnss_checks.cpp), so even with
+# perfectly steady SITL GPS they take ~10-30 s to settle below threshold
+# — this is the sole cause of the slow pre-arm here. Clearing bits 5-8
+# (2047 − 480 = 1567) drops the wait while keeping every instantaneous
+# quality check: sats, PDOP, EPH, EPV, speed-acc, spoofing, fix type.
+param set-default EKF2_GPS_CHECK      1567
 
 # Height reference: baro (= 0). Default 1 (GPS) waits on the GPS health
 # window above. Baro publishes from boot, closing the height gate sooner.
@@ -50,3 +61,14 @@ param set-default EKF2_MAG_CHECK     0
 # time, so relax to 1 (takeoff required only). Set to 0 if you want
 # to accept any waypoint list as a valid mission.
 param set-default MIS_TKO_LAND_REQ   1
+
+# Pitch attitude offset held in Stabilized mode with centered sticks.
+# Trade-off: this value is used during the liftoff transient too. A high
+# offset (e.g. 6°) keeps cruise level hands-off but commands an aggressive
+# pitch-up the moment the wheels leave the ground, and with FW_P_TC=0.25
+# the rate controller drives the elevator hard enough that the wing
+# overshoots into stall AoA at the low post-liftoff airspeed → falls back.
+# 1° is the takeoff-safe end: gentle rotation, no stall. Cruise needs a
+# small constant back-stick to hold altitude — for hands-off cruise prefer
+# Position/Altitude mode (TECS-managed) instead of bumping this up.
+param set-default FW_PSP_OFF         1

@@ -12,10 +12,12 @@
 # Compatible Sim:    X-Plane 11/12
 #
 # PX4 actuator_outputs channel layout (0-indexed):
-#   channel 0 → Aileron (single channel, mirrored in JSON map)
-#   channel 1 → V-tail right ruddervator (elevator−rudder, pre-mixed)
+#   channel 0 → Aileron (single channel, mirrored in JSON map, REVERSED)
+#   channel 1 → V-tail right ruddervator (elevator−rudder, pre-mixed, REVERSED)
 #   channel 2 → Motor (throttle)
-#   channel 3 → V-tail left  ruddervator (elevator+rudder, pre-mixed)
+#   channel 3 → V-tail left  ruddervator (elevator+rudder, pre-mixed, REVERSED)
+# Aileron + both v-tail channels are reversed via PWM_MAIN_REV=11 to match
+# the X-Plane DREF sign conventions for wing1r_ail1def and vstab*_rud1def.
 #
 # Control allocator surface types (CA_SV_CSn_TYPE):
 #   1  = left aileron        13 = left A-tail / V-tail
@@ -53,34 +55,42 @@ param set-default CA_SV_CS0_TRQ_R 1.0
 
 # CH1 — V-tail RIGHT ruddervator: elevator + (−rudder)
 param set-default CA_SV_CS1_TYPE  14         # right A/V-tail
-param set-default CA_SV_CS1_TRQ_P 0.5
-param set-default CA_SV_CS1_TRQ_Y 0.5
+param set-default CA_SV_CS1_TRQ_P 1.0
+param set-default CA_SV_CS1_TRQ_Y 1.0
 
 # CH3 — V-tail LEFT ruddervator: elevator + rudder
 # Note: PWM_MAIN_FUNC mapping below puts left v-tail on output channel 3,
 # control-allocator index 2 → output index 3 via PWM_MAIN_FUNC4.
 param set-default CA_SV_CS2_TYPE  13         # left A/V-tail
-param set-default CA_SV_CS2_TRQ_P 0.5
-param set-default CA_SV_CS2_TRQ_Y -0.5
+param set-default CA_SV_CS2_TRQ_P 1.0
+param set-default CA_SV_CS2_TRQ_Y -1.0
 
 
 ################################################################################
 # PWM OUTPUT MAPPING
 ################################################################################
-# 201 = aileron, 202 = elevator, 203 = rudder, 204 = throttle, 205 = flaps,
-# 211 = v-tail left, 212 = v-tail right. The control allocator emits the
-# pre-mixed ruddervator on the v-tail outputs.
+# PX4 output functions: 101-112 = Motor1..12, 201-208 = Servo1..8.
+# Control surfaces emerge from the allocator on Servo channels in CS-index
+# order: CS0 → Servo1 (201), CS1 → Servo2 (202), CS2 → Servo3 (203).
+# V-tail mixing happens inside the allocator via CA_SV_CSn_TYPE = 13/14;
+# there is no dedicated "v-tail" output function.
 #
 # Our X-Plane channel layout (see file header) needs:
-#   actuator_outputs.output[0] = aileron     → PWM_MAIN_FUNC1 = 201
-#   actuator_outputs.output[1] = v-tail R    → PWM_MAIN_FUNC2 = 212
-#   actuator_outputs.output[2] = motor       → PWM_MAIN_FUNC3 = 101  (motor1)
-#   actuator_outputs.output[3] = v-tail L    → PWM_MAIN_FUNC4 = 211
+#   actuator_outputs.output[0] = aileron  (CS0) → PWM_MAIN_FUNC1 = 201 (Servo1)
+#   actuator_outputs.output[1] = v-tail R (CS1) → PWM_MAIN_FUNC2 = 202 (Servo2)
+#   actuator_outputs.output[2] = motor          → PWM_MAIN_FUNC3 = 101 (Motor1)
+#   actuator_outputs.output[3] = v-tail L (CS2) → PWM_MAIN_FUNC4 = 203 (Servo3)
 
 param set-default PWM_MAIN_FUNC1 201
-param set-default PWM_MAIN_FUNC2 212
+param set-default PWM_MAIN_FUNC2 202
 param set-default PWM_MAIN_FUNC3 101
-param set-default PWM_MAIN_FUNC4 211
+param set-default PWM_MAIN_FUNC4 203
+
+# Reverse output direction on aileron + both ruddervators to match X-Plane
+# DREF sign convention (X-Plane's wing1r_ail1def and vstab*_rud1def conventions
+# are opposite to PX4's control-allocator sign). Bitmask: bit i reverses output
+# channel i+1. Channels 1, 2, 4 → (1<<0) | (1<<1) | (1<<3) = 11.
+param set-default PWM_MAIN_REV 11
 
 # Disarm values (1500 = neutral for servos, 1000 = idle for motor)
 param set-default PWM_MAIN_DIS1 1500
@@ -98,6 +108,13 @@ param set-default FW_R_LIM 60
 param set-default FW_P_LIM_MIN -45
 param set-default FW_P_LIM_MAX 45
 
+# Max pitch attitude commandable in Stabilized/manual attitude modes (no
+# altitude control). Default 30° caps how far back-stick can pitch the nose;
+# the elevator stops increasing once the aircraft holds that target, which
+# reads as "elevator can't go higher". Raised to 45° to match FW_P_LIM_MAX
+# (the auto-mode cap) so Stabilized allows the same climb attitude as AUTO.
+param set-default FW_MAN_P_MAX 45
+
 param set-default FW_AIRSPD_MIN  12
 param set-default FW_AIRSPD_TRIM 20
 param set-default FW_AIRSPD_MAX  35
@@ -111,13 +128,50 @@ param set-default FW_RR_P 0.08
 param set-default FW_RR_I 0.1
 param set-default FW_RR_FF 0.5
 
-param set-default FW_PR_P 0.08
+# Pitch rate loop strengthened from the conservative 0.08/0.5 baseline.
+# With FW_P_TC=0.25 the attitude controller demands large pitch-up rates
+# (up to FW_P_RMAX_POS=60°/s) during a dive recovery; FF=0.5/P=0.08 were
+# too weak to deflect the v-tail far enough to achieve them, so the nose
+# came up slowly. FF is the primary lever (maps rate setpoint straight to
+# surface deflection); P tightens tracking of the residual rate error.
+param set-default FW_PR_P 0.12
 param set-default FW_PR_I 0.1
-param set-default FW_PR_FF 0.5
+param set-default FW_PR_FF 0.75
+
+# Pitch attitude time constant (s). The attitude controller commands a
+# pitch rate = (pitch_error / FW_P_TC), so smaller = snappier attitude
+# response to commanded pitch changes. Default 0.4 → 0.25 cuts the
+# response latency by ~40%.
+param set-default FW_P_TC 0.25
 
 param set-default FW_YR_P 0.05
 param set-default FW_YR_I 0.05
 param set-default FW_YR_FF 0.3
+
+
+################################################################################
+# RUNWAY TAKEOFF
+################################################################################
+# Enable wheel/runway takeoff state machine for AUTO takeoffs (vs launch
+# detection). Required for the ground-roll → rotate → climbout sequence.
+param set-default RWTO_TKOFF 1
+
+# Hold the cruise pitch attitude (= FW_PSP_OFF) during taxi/ground roll
+# instead of pitch=0. With pitch=0 the autopilot drives the v-tail elevator
+# hard down trying to push the nose to level; once the v-tail surfaces
+# saturate on the elevator axis, the control allocator has no headroom left
+# for the differential (yaw) component, so rudder authority disappears
+# and the aircraft zigzags down the runway. Holding ~3° leaves both axes
+# off the rails and the differential survives → straight ground tracking.
+param set-default RWTO_PSP 3
+
+# Lift-off airspeed for the climbout. Default (-1) falls back to FW_AIRSPD_MIN
+# (12 m/s here), and RWTO_ROT_AIRSPD then becomes 0.9 × 12 = 10.8 m/s — well
+# below practical lift-off speed for this airframe (cruise 20 m/s). At that
+# rotation speed the autopilot commands FW_TKO_PITCH_MIN=10° pitch, AoA goes
+# past CLmax, and the aircraft fails to climb. 18 m/s gives enough margin
+# above stall to hold the climbout pitch without separating the wing.
+param set-default FW_TKO_AIRSPD 18
 
 
 ################################################################################
@@ -126,3 +180,31 @@ param set-default FW_YR_FF 0.3
 
 param set-default NAV_ACC_RAD 30
 param set-default MIS_TAKEOFF_ALT 50
+
+# Minimum pitch during AUTO takeoff climbout. Effective floor for TECS is
+# (FW_TKO_PITCH_MIN − FW_PSP_OFF) because TECS receives pitch limits with
+# FW_PSP_OFF subtracted and its output is consumed as absolute pitch (see
+# fw_lateral_longitudinal_control). With FW_PSP_OFF=1 (set in
+# xplane_vtail.params for Stabilized takeoff safety), an effective floor
+# of ~9° is what flies clean on this airframe → FW_TKO_PITCH_MIN = 10.
+# If FW_PSP_OFF is changed, this needs to track it (keep 10 - FW_PSP_OFF
+# ≈ 9 for a safe climbout).
+param set-default FW_TKO_PITCH_MIN 10
+
+
+################################################################################
+# WAYPOINT TRACKING (NPFG)
+################################################################################
+# Smoother path following than the small-UAV defaults. The three knobs:
+#   NPFG_PERIOD   — controller response period (s). Larger = slower turn-in,
+#                   less S-turning across the path. Default 10 → 25.
+#   NPFG_DAMPING  — damping ratio of the guidance law. Higher = less overshoot
+#                   when intercepting a new leg. Default 0.7 → 0.85.
+#   NPFG_ROLL_TC  — modeled roll command time constant (s). Larger means NPFG
+#                   assumes the airframe takes longer to roll, so it commands
+#                   roll earlier and more gently. Default 0.5 → 1.0.
+# Lower-bound auto-clamping (NPFG_LB_PERIOD=1, default on) will still cap
+# aggressiveness based on FW_R_LIM and airspeed, so over-smoothing is safe.
+param set-default NPFG_PERIOD  25
+param set-default NPFG_DAMPING 0.85
+param set-default NPFG_ROLL_TC 1.0

@@ -38,6 +38,7 @@
 #include <px4_platform_common/time.h>
 #include <lib/mathlib/mathlib.h>
 #include <lib/geo/geo.h>                          // CONSTANTS_ONE_G
+#include <lib/atmosphere/atmosphere.h>            // getPressureFromAltitude (ICAO std atmos)
 #include <lib/world_magnetic_model/geo_mag_declination.h>
 #include <drivers/device/Device.hpp>
 #include <lib/drivers/device/Device.hpp>
@@ -975,9 +976,13 @@ void SimulatorXPlane::publish_baro(hrt_abstime t)
 {
 	sensor_baro_s baro{};
 	baro.timestamp_sample = t;
-	// 1 Pa RMS noise — matches sensor_baro_sim and prevents DataValidator from
-	// flagging the stream STALE when altitude is constant on the ground.
-	baro.pressure         = 101325.0f * expf(-_alt_m / 8434.5f) + xplane_wgn() * 1.0f;
+	// Use the same ICAO standard-atmosphere model PX4's VehicleAirData uses to
+	// decode pressure back to altitude. An isothermal exp() model here would
+	// produce a height bias that grows with field elevation (~1 m at 500 m MSL,
+	// several m higher) and keeps the EKF baro-vs-GPS innovation from zeroing.
+	// 1 Pa RMS noise keeps DataValidator from flagging the stream STALE on the
+	// ground when altitude is constant.
+	baro.pressure         = atmosphere::getPressureFromAltitude(_alt_m) + xplane_wgn() * 1.0f;
 	baro.temperature      = 20.0f + xplane_wgn() * 0.01f;
 	baro.device_id        = 6620172;
 	baro.timestamp        = hrt_absolute_time();
